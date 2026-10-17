@@ -4,7 +4,12 @@ import type { GeoSuggestion, RouteCalc } from '../shared/types.js';
 // Free OpenStreetMap based services: Photon (search-as-you-type geocoder) and OSRM (routing).
 const PHOTON = process.env.PHOTON_URL ?? 'https://photon.komoot.io';
 const OSRM = process.env.OSRM_URL ?? 'https://router.project-osrm.org';
-const HU_BBOX = '16.1,45.7,22.95,48.6';
+// Results near Hungary rank first, but foreign addresses (e.g. Austrian partners) are found too.
+const BIAS = 'lat=47.16&lon=19.5&zoom=6&location_bias_scale=0.3';
+const COUNTRIES: Record<string, string> = {
+  AT: 'Ausztria', SK: 'Szlovákia', RO: 'Románia', RS: 'Szerbia', HR: 'Horvátország', SI: 'Szlovénia',
+  UA: 'Ukrajna', DE: 'Németország', CZ: 'Csehország', PL: 'Lengyelország', IT: 'Olaszország',
+};
 const UA = 'menet-mester/0.1 (utnyilvantarto)';
 
 const getCache = db.prepare('SELECT value FROM geo_cache WHERE key = ?');
@@ -31,20 +36,23 @@ interface PhotonFeature {
 
 function toSuggestion(f: PhotonFeature): GeoSuggestion {
   const p = f.properties;
-  const street = p.street ? `${p.street}${p.housenumber ? ' ' + p.housenumber + '.' : ''}` : '';
+  const hu = !p.countrycode || p.countrycode === 'HU';
+  // Hungarian house numbers are written with a trailing dot, foreign ones without
+  const street = p.street ? `${p.street}${p.housenumber ? ' ' + p.housenumber + (hu ? '.' : '') : ''}` : '';
+  const country = hu ? '' : COUNTRIES[p.countrycode!] ?? p.country ?? p.countrycode!;
   const city = p.city ?? p.town ?? p.village ?? p.county ?? '';
   const place = [p.postcode, city].filter(Boolean).join(' ');
   const primary = p.name && p.name !== street ? p.name : street || city || (p.name ?? '');
-  const secondary = [p.name && p.name !== street ? street : '', place].filter(Boolean).join(', ');
-  const label = [place, street || (p.name ?? '')].filter(Boolean).join(', ').replace(/^(\d+) /, '$1 ');
+  const secondary = [p.name && p.name !== street ? street : '', place, country].filter(Boolean).join(', ');
+  const label = [place, street || (p.name ?? ''), country].filter(Boolean).join(', ');
   return { label, primary, secondary, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
 }
 
 export async function suggest(q: string): Promise<GeoSuggestion[]> {
   const query = q.trim();
   if (query.length < 3) return [];
-  return cached(`s:${query.toLowerCase()}`, async () => {
-    const url = `${PHOTON}/api/?q=${encodeURIComponent(query)}&limit=7&bbox=${HU_BBOX}&lang=default`;
+  return cached(`s2:${query.toLowerCase()}`, async () => {
+    const url = `${PHOTON}/api/?q=${encodeURIComponent(query)}&limit=7&${BIAS}&lang=default`;
     const data = (await fetchJson(url)) as { features: PhotonFeature[] };
     const seen = new Set<string>();
     return data.features.map(toSuggestion).filter((s) => {
