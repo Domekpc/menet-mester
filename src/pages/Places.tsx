@@ -96,6 +96,8 @@ export function PlacesPage() {
                   <b>{d.name}</b>
                   <div className="muted small">{d.address}</div>
                 </div>
+                {d.minGapDays ? <span className="chip" title="Két látogatás között legalább">≥ {d.minGapDays} nap</span> : null}
+                {(d.maxPerDay ?? 1) > 1 && <span className="chip" title="Naponta legfeljebb">{d.maxPerDay}×/nap</span>}
                 {used > 0 && <span className="chip">{used} út</span>}
                 {d.lat == null && <span className="chip sign" title="Első használatkor megkeressük a térképen">nincs térképen</span>}
                 <div className="actions">
@@ -151,12 +153,17 @@ function PlaceForm({ initial, onClose, onSave }: { initial: Partial<Destination>
   const [address, setAddress] = useState(initial.address ?? '');
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(initial.lat != null ? { lat: initial.lat!, lon: initial.lon! } : null);
   const [tried, setTried] = useState(false);
+  const [perDay, setPerDay] = useState(initial.maxPerDay != null ? String(initial.maxPerDay) : '');
+  const [gap, setGap] = useState(initial.minGapDays != null ? String(initial.minGapDays) : '');
   const points = useMemo(() => (coords ? [{ ...coords, label: name }] : []), [coords, name]);
 
   const submit = async () => {
     setTried(true);
     if (!name.trim() || !address.trim()) return;
-    await onSave({ name: name.trim(), address: address.trim(), lat: coords?.lat ?? null, lon: coords?.lon ?? null });
+    await onSave({
+      name: name.trim(), address: address.trim(), lat: coords?.lat ?? null, lon: coords?.lon ?? null,
+      maxPerDay: perDay ? Number(perDay) : null, minGapDays: gap ? Number(gap) : null,
+    });
   };
 
   return (
@@ -175,6 +182,14 @@ function PlaceForm({ initial, onClose, onSave }: { initial: Partial<Destination>
       <Field label="Név / partner" error={tried && !name.trim() ? 'Adj nevet az úticélnak' : undefined}>
         <input className={`input ${tried && !name.trim() ? 'invalid' : ''}`} value={name} placeholder="pl. OTP Bank, Könyvelő iroda" onChange={(e) => setName(e.target.value)} />
       </Field>
+      <div className="grid cols-2">
+        <Field label="Naponta legfeljebb" hint="Üresen: 1 — senki nem megy kétszer a postára egy nap">
+          <div className="input-suffix"><input className="input mono" inputMode="numeric" placeholder="1" value={perDay} onChange={(e) => setPerDay(e.target.value.replace(/\D/g, ''))} /><em>alkalom</em></div>
+        </Field>
+        <Field label="Két látogatás között legalább" hint="Üresen: nincs megkötés">
+          <div className="input-suffix"><input className="input mono" inputMode="numeric" placeholder="–" value={gap} onChange={(e) => setGap(e.target.value.replace(/\D/g, ''))} /><em>nap</em></div>
+        </Field>
+      </div>
       {coords ? <RouteMap points={points} height={220} /> : address && <p className="muted small">Válassz a listából, hogy a hely a térképre kerüljön (enélkül is menthető).</p>}
     </Modal>
   );

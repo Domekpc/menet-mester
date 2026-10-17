@@ -1,9 +1,10 @@
 import { db } from './db.js';
 import type { SQLInputValue } from 'node:sqlite';
-import { geocode, route as osrmRoute } from './geo.js';
+import { distanceMatrix, geocode } from './geo.js';
 import type {
-  Company, Destination, Driver, GenerateRequest, Route, SavedReport, Vehicle, VehicleEvent,
+  Company, Destination, Driver, GenerateRequest, Route, SavedReport, TripTemplate, Vehicle, VehicleEvent,
 } from '../shared/types.js';
+import { BASE } from '../shared/types.js';
 
 // Column mapping between snake_case tables and camelCase API objects.
 type Mapping = Record<string, string>;
@@ -39,7 +40,9 @@ export const vehicles = entity<Vehicle>('vehicles', {
   plate: 'plate', category: 'category', model: 'model', fuel: 'fuel', consumption: 'consumption',
 });
 export const drivers = entity<Driver>('drivers', { name: 'name', taxNumber: 'tax_number', address: 'address' });
-export const destinations = entity<Destination>('destinations', { name: 'name', address: 'address', lat: 'lat', lon: 'lon' });
+export const destinations = entity<Destination>('destinations', {
+  name: 'name', address: 'address', lat: 'lat', lon: 'lon', maxPerDay: 'max_per_day', minGapDays: 'min_gap_days',
+});
 export const routes = entity<Route>('routes', { name: 'name', fromId: 'from_id', toId: 'to_id', distanceKm: 'distance_km' });
 export const vehicleEvents = entity<VehicleEvent>('vehicle_events', {
   vehicleId: 'vehicle_id', date: 'date', type: 'type', destinationId: 'destination_id',
@@ -78,49 +81,81 @@ export async function coordsOf(d: Destination) {
   return c;
 }
 
+export const templates = (() => {
+  const fromRow = (r: Record<string, unknown>): TripTemplate => ({
+    id: Number(r.id),
+    name: String(r.name),
+    startWeekdays: JSON.parse(String(r.start_weekdays)),
+    days: JSON.parse(String(r.days)),
+    minPerMonth: r.min_per_month == null ? null : Number(r.min_per_month),
+    maxPerMonth: r.max_per_month == null ? null : Number(r.max_per_month),
+    onlyDates: JSON.parse(String(r.only_dates)),
+    note: String(r.note ?? ''),
+  });
+  const values = (t: Partial<TripTemplate>) => [
+    t.name ?? '', JSON.stringify(t.startWeekdays ?? []), JSON.stringify(t.days ?? []),
+    t.minPerMonth ?? null, t.maxPerMonth ?? null, JSON.stringify(t.onlyDates ?? []), t.note ?? '',
+  ];
+  const cols = 'name, start_weekdays, days, min_per_month, max_per_month, only_dates, note';
+  return {
+    list: () => (db.prepare('SELECT * FROM trip_templates ORDER BY id').all() as Record<string, unknown>[]).map(fromRow),
+    get: (id: number) => {
+      const r = db.prepare('SELECT * FROM trip_templates WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+      return r ? fromRow(r) : undefined;
+    },
+    create: (t: Partial<TripTemplate>) =>
+      Number(db.prepare(`INSERT INTO trip_templates (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(...values(t)).lastInsertRowid),
+    update: (id: number, t: Partial<TripTemplate>) =>
+      db.prepare(`UPDATE trip_templates SET ${cols.split(', ').map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...values(t), id),
+    remove: (id: number) => db.prepare('DELETE FROM trip_templates WHERE id = ?').run(id),
+  };
+})();
+
 /**
- * Distance table for every leg a generation may need. Saved routes win (in either direction),
- * the rest is calculated with the routing service.
+ * Distances between every destination a generation may touch. Saved routes win (in either
+ * direction), the rest comes from one routing-service distance matrix.
  */
 export async function resolveLegs(req: GenerateRequest) {
   const allRoutes = routes.list();
+  const allTemplates = templates.list();
   const destMap = new Map(destinations.list().map((d) => [d.id, d]));
-  const known = new Map<string, number>();
-  const key = (a: number, b: number) => `${a}-${b}`;
-  for (const r of allRoutes) {
-    known.set(key(r.fromId, r.toId), r.distanceKm);
-    if (!known.has(key(r.toId, r.fromId))) known.set(key(r.toId, r.fromId), r.distanceKm);
-  }
-
-  const pairs = new Set<string>();
   const base = req.baseDestinationId;
-  const need = (a: number, b: number) => { if (a !== b) { pairs.add(key(a, b)); pairs.add(key(b, a)); } };
+  const real = (id: number) => (id === BASE ? base : id);
+
+  const ids = new Set<number>([base]);
   for (const rule of req.routes) {
     const r = allRoutes.find((x) => x.id === rule.routeId);
-    if (!r) continue;
-    need(base, r.fromId); need(r.fromId, r.toId); need(r.toId, base);
+    if (r) { ids.add(r.fromId); ids.add(r.toId); }
   }
-  const byDate = new Map<string, number[]>();
-  for (const s of req.stops) byDate.set(s.date, [...(byDate.get(s.date) ?? []), s.destinationId]);
-  for (const ids of byDate.values()) {
-    const seq = [base, ...ids, base];
-    seq.slice(1).forEach((id, i) => need(seq[i], id));
-  }
+  const usedTemplates = new Set([
+    ...(req.templates ?? []).map((t) => t.templateId),
+    ...(req.plan ?? []).flatMap((e) => (e.type === 'template' ? [e.templateId] : [])),
+  ]);
+  for (const t of allTemplates) if (usedTemplates.has(t.id)) t.days.forEach((d) => d.stops.forEach((id) => ids.add(real(id))));
+  for (const e of req.plan ?? []) if (e.type === 'visit') e.destinationIds.forEach((id) => ids.add(id));
+  for (const s of req.stops) ids.add(s.destinationId);
+  for (const l of req.locked ?? []) l.stops.forEach((id) => ids.add(id));
 
-  for (const p of pairs) {
-    if (known.has(p)) continue;
-    const [a, b] = p.split('-').map(Number);
-    if (known.has(key(b, a))) { known.set(p, known.get(key(b, a))!); continue; }
-    const da = destMap.get(a), dbb = destMap.get(b);
-    if (!da || !dbb) throw new Error('Hiányzó úticél az adatok között');
-    const calc = await osrmRoute(await coordsOf(da), await coordsOf(dbb));
-    known.set(p, calc.distanceKm);
+  const list = [...ids].filter((id) => destMap.has(id));
+  const missing = [...ids].filter((id) => !destMap.has(id));
+  if (missing.length) throw new Error('Hiányzó úticél az adatok között — lehet, hogy közben törölték.');
+
+  const known = new Map<string, number>();
+  const key = (a: number, b: number) => `${a}-${b}`;
+  const points = await Promise.all(list.map((id) => coordsOf(destMap.get(id)!)));
+  const matrix = await distanceMatrix(points);
+  list.forEach((a, i) => list.forEach((b, j) => { if (!Number.isNaN(matrix[i][j])) known.set(key(a, b), matrix[i][j]); }));
+  for (const r of allRoutes) {
+    known.set(key(r.fromId, r.toId), r.distanceKm);
+    known.set(key(r.toId, r.fromId), r.distanceKm);
   }
 
   return {
     destinations: destMap,
     routes: new Map(allRoutes.map((r) => [r.id, r])),
+    templates: new Map(allTemplates.map((t) => [t.id, t])),
     legKm: (a: number, b: number) => {
+      if (a === b) return 0;
       const v = known.get(key(a, b));
       if (v == null) throw new Error(`Ismeretlen távolság: ${destMap.get(a)?.name} → ${destMap.get(b)?.name}`);
       return v;

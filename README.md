@@ -30,10 +30,17 @@ A felület: http://localhost:5173 (az API a 3001-es porton fut, a Vite proxyzza)
 - **Kötelező helyszínek:** a generátor a járműnaplóból „kéri le”, hol kellett az autónak lennie.
   A JSZP (szerviz/vizsga km-állások) nem kínál nyilvános API-t, ezért ezek kézzel rögzíthetők; a
   `server/index.ts` `providers` listája új forrással (pl. gyártói connected car API, GPS flotta) bővíthető.
-- **Generálás** (`server/generator.ts`): a km-óra kontrollpontok (kezdő/záró állás, szerviz km-állás,
-  saját elvárás) szakaszokra bontják az időszakot; minden szakasz km-ét munkanapokra (hétvége és
-  ünnepnapok nélkül) elosztott oda-vissza utakkal tölti ki, a havi min/max figyelembevételével,
-  a végén pontos illesztéssel (korlátos hátizsák). Ugyanazzal a seed-del ugyanaz az eredmény.
+- **Utazás-sablonok:** napokra bontott, ismétlődő utazások (pl. hétfőn ki Deutschlandsbergbe, közben naponta
+  Aichegg és vissza, pénteken haza). Megadható, mely napokon indulhat, havonta hányszor, vagy hogy csak konkrét
+  dátumokon történt (pl. számla alapján).
+- **Generálás** (`server/generator.ts`): napokat tervez. Először a rögzített napok kerülnek be (korábban
+  rögzített napok, járműnapló, a naptárba tett látogatások és sablonok, dátumhoz kötött sablonok). A km-óra
+  kontrollpontok szakaszokra bontják az időszakot, és minden szakaszt munkanapokra elosztott utakkal tölt ki:
+  - úticél-szabályok: naponta legfeljebb (alapból 1), két látogatás között legalább X nap,
+  - körutak véletlenszerűen (soha / ritkán / néha / gyakran), csak egymáshoz közeli helyekből,
+  - messzi útnál (állítható km felett) 1–2 éjszaka ott, közben helyi utakkal vagy álló autóval,
+  - a végén pontos illesztés (korlátos hátizsák), majd életszerűségi ellenőrzés.
+  Ugyanazzal a seed-del ugyanaz az eredmény; a rögzített napok új változatnál is megmaradnak.
 - **Export** (`server/export.ts`): hónaponként egy munkalap a minta szerinti fejléccel, útlistával,
   összes km-rel és üzemanyagköltséggel (norma × ár).
 

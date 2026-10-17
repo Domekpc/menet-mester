@@ -87,3 +87,17 @@ export async function route(from: { lat: number; lon: number }, to: { lat: numbe
     };
   });
 }
+
+/** Driving distances (km) between all points, one request for the whole set. */
+export async function distanceMatrix(points: { lat: number; lon: number }[]): Promise<number[][]> {
+  if (points.length < 2) return points.map(() => [0]);
+  const coords = points.map((p) => `${p.lon},${p.lat}`).join(';');
+  return cached(`m:${coords}`, async () => {
+    const data = (await fetchJson(`${OSRM}/table/v1/driving/${coords}?annotations=distance`)) as {
+      code: string;
+      distances: (number | null)[][];
+    };
+    if (data.code !== 'Ok') throw new Error('A távolságok nem számolhatók ki');
+    return data.distances.map((row) => row.map((m) => (m == null ? NaN : Math.round(m / 100) / 10)));
+  });
+}

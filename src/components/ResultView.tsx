@@ -1,20 +1,37 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { fmtDate, fmtInt, fmtKm } from '../api';
 import { monthLabel, MONTH_NAMES } from '../../shared/calendar';
-import type { GenerateResult, Vehicle } from '../../shared/types';
+import type { DayKind, DayPlan, Destination, GenerateResult, Vehicle } from '../../shared/types';
 import { Icon } from './Icon';
+import { MonthGrid } from './MonthGrid';
+
+export const KIND_LABEL: Record<DayKind, string> = {
+  free: 'generált', trip: 'többnapos út', template: 'utazás-sablon', required: 'járműnapló', plan: 'megadott nap',
+};
 
 const weekdays = ['V', 'H', 'K', 'Sze', 'Cs', 'P', 'Szo'];
 const wd = (d: string) => weekdays[new Date(`${d}T00:00:00Z`).getUTCDay()];
 
 /** Month-by-month preview of a generated record with fuel cost calculation. */
-export function ResultView({ result, vehicle, fuelPrices, onFuelPrice }: {
+export function ResultView({ result, vehicle, destById, fuelPrices, onFuelPrice, lockedUnits, onToggleLock }: {
   result: GenerateResult;
   vehicle?: Vehicle;
+  destById?: Map<number, Destination>;
   fuelPrices: Record<string, number>;
   onFuelPrice?: (month: string, price: number) => void;
+  lockedUnits?: Set<string>;
+  onToggleLock?: (unitId: string) => void;
 }) {
   const [tab, setTab] = useState(0);
+  const [view, setView] = useState<'calendar' | 'table'>('calendar');
+  const dayMap = useMemo(() => new Map((result.days ?? []).map((d) => [d.date, d])), [result.days]);
+  const dayKm = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const mo of result.months) for (const l of mo.legs) m.set(l.date, Math.round(((m.get(l.date) ?? 0) + l.km) * 10) / 10);
+    return m;
+  }, [result.months]);
+  const placeName = (id: number) => destById?.get(id)?.name ?? result.months.flatMap((m) => m.legs).find((l) => l.toId === id)?.partner ?? '?';
+  const isLocked = (d: DayPlan) => !!lockedUnits?.has(d.unitId) || !!d.locked;
   const month = result.months[tab];
   const max = Math.max(1, ...result.months.map((m) => m.totalKm));
   const cost = (m: { month: string; totalKm: number }) =>
@@ -81,8 +98,35 @@ export function ResultView({ result, vehicle, fuelPrices, onFuelPrice }: {
             </div>
           </label>
           <span className="chip sign">{fmtKm(month.totalKm)} km · {fmtInt(cost(month))} Ft</span>
+          {result.days && (
+            <div className="tabs">
+              <button className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}>Naptár</button>
+              <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>Táblázat</button>
+            </div>
+          )}
         </div>
-        {month.legs.length === 0 ? (
+        {view === 'calendar' && result.days ? (
+          <div style={{ padding: 16 }} className="stack">
+            {onToggleLock && <p className="muted small">Kattints egy napra a rögzítéshez — az „Új változat” a rögzített napokat (és a hozzájuk tartozó többnapos utat) megtartja, a többit újrasorsolja.</p>}
+            <MonthGrid month={month.month}
+              onCellClick={onToggleLock ? (d) => { const p = dayMap.get(d); if (p) onToggleLock(p.unitId); } : undefined}
+              cellClass={(d) => { const p = dayMap.get(d); return p ? `rk-${p.kind} ${isLocked(p) ? 'locked' : ''}` : ''; }}
+              cell={(d) => {
+                const p = dayMap.get(d);
+                if (!p) return null;
+                return (
+                  <div className="mgrid-items" title={`${KIND_LABEL[p.kind]}${p.label ? ' · ' + p.label : ''}`}>
+                    {isLocked(p) && <span className="lock-badge" aria-label="Rögzítve"><Icon name="check" size={11} /></span>}
+                    <span className="rday">{p.stops.length ? p.stops.map(placeName).join(' → ') : <i>ott tartózkodik</i>}</span>
+                    {dayKm.get(d) ? <span className="rkm mono">{fmtKm(dayKm.get(d)!)} km</span> : null}
+                  </div>
+                );
+              }} />
+            <div className="row wrap small" style={{ gap: 14 }}>
+              {(Object.keys(KIND_LABEL) as DayKind[]).map((k) => <span key={k} className="legend"><i className={`lg rk-${k}`} />{KIND_LABEL[k]}</span>)}
+            </div>
+          </div>
+        ) : month.legs.length === 0 ? (
           <p className="muted" style={{ padding: 24 }}>Ebben a hónapban nincs út.</p>
         ) : (
           <table className="table">
@@ -95,7 +139,8 @@ export function ResultView({ result, vehicle, fuelPrices, onFuelPrice }: {
                     <td className="mono small" style={{ whiteSpace: 'nowrap' }}>{newDay ? <>{fmtDate(l.date)} <span className="muted">{wd(l.date)}</span></> : ''}</td>
                     <td>
                       <span className="small">{l.fromAddress} <span className="muted">→</span> {l.toAddress}</span>
-                      {l.required && <span className="chip sign" style={{ marginLeft: 8 }}>kötelező</span>}
+                      {l.required && <span className="chip sign" style={{ marginLeft: 8 }}>{l.kind === 'plan' ? 'megadott' : 'kötelező'}</span>}
+                      {newDay && (l.kind === 'template' || l.kind === 'trip') && <span className="chip info" style={{ marginLeft: 8 }}>{l.label}</span>}
                     </td>
                     <td>{l.partner}</td>
                     <td className="num mono">{fmtKm(l.km)}</td>

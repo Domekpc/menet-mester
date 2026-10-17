@@ -30,6 +30,28 @@ export interface Destination {
   address: string;
   lat: number | null;
   lon: number | null;
+  maxPerDay: number | null; // how many times a day it may be visited (default 1)
+  minGapDays: number | null; // at least this many days between two visits
+}
+
+/** Placeholder for the company base inside trip templates. */
+export const BASE = 0;
+
+export interface TripTemplateDay {
+  stops: number[]; // destination ids in order, BASE = telephely; empty = the car stays parked
+  repeat: number; // the same day plan repeated on consecutive days
+}
+
+/** A recurring trip described day by day, e.g. a Monday–Friday stay abroad. */
+export interface TripTemplate {
+  id: number;
+  name: string;
+  startWeekdays: number[]; // 1 = Monday … 7 = Sunday; empty = any working day
+  days: TripTemplateDay[];
+  minPerMonth: number | null;
+  maxPerMonth: number | null;
+  onlyDates: string[]; // when set, the trip happens exactly on these start dates and never otherwise
+  note: string;
 }
 
 export interface Route {
@@ -90,6 +112,32 @@ export interface RouteRule {
   maxPerMonth: number | null;
 }
 
+export interface TemplateRule {
+  templateId: number;
+  minPerMonth: number | null;
+  maxPerMonth: number | null;
+}
+
+/** Something the user knows about a given day, placed on the planner calendar. */
+export type PlanEntry =
+  | { id: string; date: string; type: 'visit'; destinationIds: number[]; odometer: number | null }
+  | { id: string; date: string; type: 'template'; templateId: number };
+
+export type TourChance = 'never' | 'rare' | 'sometimes' | 'often';
+
+export type DayKind = 'free' | 'trip' | 'template' | 'required' | 'plan';
+
+/** What the car did on one day. Days without driving inside a multi-day trip have no stops. */
+export interface DayPlan {
+  date: string;
+  stops: number[];
+  kind: DayKind;
+  label: string;
+  unitId: string; // days of one multi-day trip share it
+  ruleKey?: string; // r:<routeId> or t:<templateId> on the first day of a generated unit
+  locked?: boolean;
+}
+
 export interface GenerateRequest {
   companyId: number;
   vehicleId: number;
@@ -102,6 +150,11 @@ export interface GenerateRequest {
   stops: RequiredStop[];
   checkpoints: OdometerCheckpoint[];
   routes: RouteRule[];
+  templates: TemplateRule[];
+  plan: PlanEntry[];
+  locked: DayPlan[];
+  tourChance: TourChance;
+  farKm: number | null; // one-way distance from which a trip may include nights away; null = never
   seed?: number;
 }
 
@@ -114,6 +167,8 @@ export interface TripLeg {
   partner: string;
   km: number;
   required: boolean;
+  kind: DayKind;
+  label: string;
 }
 
 export interface MonthResult {
@@ -126,6 +181,7 @@ export interface MonthResult {
 
 export interface GenerateResult {
   months: MonthResult[];
+  days: DayPlan[];
   totalKm: number;
   targetKm: number;
   warnings: string[];

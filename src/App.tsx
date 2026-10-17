@@ -6,6 +6,7 @@ import { PlacesPage } from './pages/Places';
 import { JournalPage } from './pages/Journal';
 import { WizardPage } from './pages/Wizard';
 import { ReportsPage, ReportPage } from './pages/Reports';
+import { TemplatesPage } from './pages/Templates';
 
 const nav = [
   { to: '/', icon: 'home', label: 'Áttekintés', end: true },
@@ -14,6 +15,7 @@ const nav = [
 ];
 const data = [
   { to: '/utak', icon: 'route', label: 'Utak és úticélok' },
+  { to: '/sablonok', icon: 'calendar', label: 'Utazás-sablonok' },
   { to: '/torzsadatok', icon: 'building', label: 'Cég, jármű, sofőr' },
   { to: '/jarmunaplo', icon: 'wrench', label: 'Járműnapló' },
 ];
@@ -45,6 +47,7 @@ export function App() {
           <Route path="/nyilvantartasok" element={<ReportsPage />} />
           <Route path="/nyilvantartasok/:id" element={<ReportPage />} />
           <Route path="/utak" element={<PlacesPage />} />
+          <Route path="/sablonok" element={<TemplatesPage />} />
           <Route path="/torzsadatok" element={<MasterDataPage />} />
           <Route path="/jarmunaplo" element={<JournalPage />} />
         </Routes>

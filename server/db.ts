@@ -74,11 +74,29 @@ CREATE TABLE IF NOT EXISTS reports (
   result TEXT NOT NULL,
   fuel_prices TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trip_templates (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  start_weekdays TEXT NOT NULL DEFAULT '[]',
+  days TEXT NOT NULL DEFAULT '[]',
+  min_per_month INTEGER,
+  max_per_month INTEGER,
+  only_dates TEXT NOT NULL DEFAULT '[]',
+  note TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS geo_cache (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 `);
+
+// Columns added after the first release
+function addColumn(table: string, column: string, type: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+addColumn('destinations', 'max_per_day', 'INTEGER');
+addColumn('destinations', 'min_gap_days', 'INTEGER');
 
 function seed() {
   const count = db.prepare('SELECT COUNT(*) AS n FROM companies').get() as { n: number };

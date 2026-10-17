@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import './db.js';
 import { suggest, route as osrmRoute } from './geo.js';
 import {
-  companies, coordsOf, destinations, drivers, reports, resolveLegs, routes, vehicleEvents, vehicles,
+  companies, coordsOf, destinations, drivers, reports, resolveLegs, routes, templates, vehicleEvents, vehicles,
 } from './repo.js';
 import { generate } from './generator.js';
 import { buildWorkbook } from './export.js';
@@ -36,6 +36,17 @@ crud('drivers', drivers);
 crud('destinations', destinations);
 crud('routes', routes);
 crud('vehicle-events', vehicleEvents);
+
+app.get('/api/templates', h((_q, r) => r.json(templates.list())));
+app.post('/api/templates', h((q, r) => r.json(templates.get(templates.create(q.body)))));
+app.put('/api/templates/:id', h((q, r) => {
+  templates.update(Number(q.params.id), q.body);
+  r.json(templates.get(Number(q.params.id)));
+}));
+app.delete('/api/templates/:id', h((q, r) => {
+  templates.remove(Number(q.params.id));
+  r.json({ ok: true });
+}));
 
 // ---- maps ----
 app.get('/api/geo/suggest', h(async (q, r) => r.json(await suggest(String(q.query.q ?? '')))));
