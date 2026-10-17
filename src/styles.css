@@ -401,3 +401,8 @@ tr:hover .actions, .item:hover .actions, .actions:focus-within { opacity: 1; }
   .road-step .lbl { display: none; }
   .route-row { grid-template-columns: 28px 1fr; }
 }
+
+/* search inputs look like the other fields (no native clear button / rounding) */
+input[type='search'] { -webkit-appearance: none; appearance: none; }
+input[type='search']::-webkit-search-decoration,
+input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
