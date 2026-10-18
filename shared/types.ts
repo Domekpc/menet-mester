@@ -116,7 +116,8 @@ export interface UnitRule {
   min: number | null;
   max: number | null;
   minGapDays: number | null; // at least this many days between two occurrences
-  weekdays: number[]; // allowed (start) weekdays, 1 = Monday … 7 = Sunday; empty = working days
+  weekdays: number[]; // allowed (departure) weekdays, 1 = Monday … 7 = Sunday; empty = any day
+  endWeekdays: number[]; // multi-day templates: allowed arrival weekdays; empty = any day
   onlyDates: string[]; // when set: exactly on these dates and never otherwise
 }
 

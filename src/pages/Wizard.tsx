@@ -461,9 +461,9 @@ function RoutesStep({
   const tripsNeeded = avgTrip ? targetKm / avgTrip : 0;
   const perDay = workdays ? tripsNeeded / workdays : 0;
 
-  const row = (key: string, title: React.ReactNode, sub: string, size: React.ReactNode) => {
+  const row = (key: string, title: React.ReactNode, sub: string, size: React.ReactNode, len = 1) => {
     const r = rule(key);
-    const summary = ruleSummary(r);
+    const summary = ruleSummary(r, len);
     return (
       <div key={key} className={`unit-row ${r.on ? '' : 'off'} ${open === key ? 'open' : ''}`}>
         <div className="unit-head">
@@ -478,7 +478,7 @@ function RoutesStep({
             <Icon name="edit" />Szabályok{summary.length ? ` (${summary.length})` : ''}
           </button>
         </div>
-        {open === key && <RuleEditor value={r} onChange={(x) => set(key, x)} period={period} />}
+        {open === key && <RuleEditor value={r} onChange={(x) => set(key, x)} period={period} len={len} />}
       </div>
     );
   };
@@ -513,7 +513,7 @@ function RoutesStep({
             <Link to="/sablonok" className="btn btn-sm btn-ghost">Kezelés</Link>
           </div>
           {templates.length === 0 && <p className="muted" style={{ padding: 20 }}>Nincs utazás-sablon. <Link to="/sablonok">Vegyél fel egyet</Link>, ha van többnapos vagy több helyet érintő utad.</p>}
-          {templates.map((t) => row(`t:${t.id}`, <b>{t.name}</b>, t.days.map((d) => dayText(d, destById)).join(' · '), `${templateLength(t)} nap`))}
+          {templates.map((t) => row(`t:${t.id}`, <b>{t.name}</b>, t.days.map((d) => dayText(d, destById)).join(' · '), `${templateLength(t)} nap`, templateLength(t)))}
         </div>
       </div>
 

@@ -33,7 +33,9 @@ A felület: http://localhost:5173 (az API a 3001-es porton fut, a Vite proxyzza)
 - **Utazás-sablonok:** napokra bontott utazások (pl. kimész Deutschlandsbergbe, közben naponta Aichegg és
   vissza, az utolsó napon haza).
 - **Szabályok** (generáláskor, utanként és sablononként egyformán): hányszor (naponta / hetente / havonta,
-  min–max), két alkalom között legalább X nap, mely napokon, csak ezeken a napokon (dátumlista).
+  min–max), két alkalom között legalább X nap, mely napokon (üresen: bármelyik nap), csak ezeken a napokon
+  (dátumlista). Többnapos sablonnál indulás és érkezés napja adható meg; a „naponta” csak egynapos, a „hetente”
+  legfeljebb 7 napos sablonnál választható.
 - **Generálás** (`server/generator.ts`): napokat tervez. Először a rögzített napok kerülnek be (korábban
   rögzített napok, járműnapló, dátumlistás utak és sablonok). A km-óra kontrollpontok szakaszokra bontják az
   időszakot, és minden szakaszt a szabályok szerint, munkanapokra elosztott utakkal tölt ki. Egy helyre naponta

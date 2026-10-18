@@ -42,7 +42,7 @@ const ctx: GeneratorContext = {
 
 type RuleOpts = Partial<Omit<UnitRule, 'kind' | 'id'>>;
 const rule = (id: number, o: RuleOpts = {}): UnitRule =>
-  ({ kind: 'route', id, period: 'month', min: null, max: null, minGapDays: null, weekdays: [], onlyDates: [], ...o });
+  ({ kind: 'route', id, period: 'month', min: null, max: null, minGapDays: null, weekdays: [], endWeekdays: [], onlyDates: [], ...o });
 const tpl = (id: number, o: RuleOpts = {}): UnitRule => ({ ...rule(id, o), kind: 'template' });
 const base: GenerateRequest = {
   companyId: 1, vehicleId: 1, driverId: 1, baseDestinationId: 1,
@@ -175,10 +175,32 @@ describe('generate', () => {
     expect(Math.abs(second.totalKm - 600)).toBeLessThan(1);
   });
 
-  it('never drives on Sunday or public holidays when there is room on weekdays', () => {
-    const dates = legs(generate(base, ctx)).map((l) => l.date);
-    expect(dates).not.toContain('2024-05-01');
-    expect(dates.every((x) => new Date(x + 'T00:00:00Z').getUTCDay() !== 0)).toBe(true);
+  it('uses any day of the week when no weekday is given', () => {
+    const r = generate({ ...base, endOdometer: 11500, seed: 4 }, ctx);
+    const weekdays = new Set(r.days.map((d) => new Date(d.date + 'T00:00:00Z').getUTCDay()));
+    expect(weekdays.has(0) || weekdays.has(6)).toBe(true);
+  });
+
+  it('respects departure and arrival weekdays of a multi-day template', () => {
+    const r = generate({ ...base, endOdometer: 13000, rules: [...base.rules, tpl(30, { min: 1, max: 1, weekdays: [1], endWeekdays: [5] })] }, ctx);
+    const starts = r.days.filter((d) => d.ruleKey === 't:30');
+    expect(starts.length).toBe(3);
+    for (const d of starts) {
+      expect(new Date(d.date + 'T00:00:00Z').getUTCDay()).toBe(1);
+      const end = new Date(new Date(d.date + 'T00:00:00Z').getTime() + 4 * 864e5);
+      expect(r.days.find((x) => x.date === end.toISOString().slice(0, 10))?.stops).toEqual([6, 1]);
+    }
+  });
+
+  it('reports a template whose departure and arrival days cannot match', () => {
+    const r = generate({ ...base, rules: [...base.rules, tpl(30, { min: 1, weekdays: [1], endWeekdays: [3] })] }, ctx);
+    expect(r.days.some((d) => d.ruleKey === 't:30')).toBe(false);
+    expect(r.warnings.some((w) => w.includes('Deutschlandsbergi hét'))).toBe(true);
+  });
+
+  it('counts a multi-day template per month even if the rule says per day', () => {
+    const r = generate({ ...base, endOdometer: 13000, rules: [...base.rules, tpl(30, { period: 'day', min: 1, max: 1 })] }, ctx);
+    expect(r.days.filter((d) => d.ruleKey === 't:30').length).toBe(3);
   });
 
   it('is reproducible with the same seed', () => {

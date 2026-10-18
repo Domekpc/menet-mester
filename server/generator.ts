@@ -12,7 +12,7 @@ import {
   type TripTemplate,
   type UnitRule,
 } from '../shared/types.js';
-import { addDays, isDrivingDay, monthOf, monthRange, lastDayOfMonth, weekday } from '../shared/calendar.js';
+import { addDays, monthOf, monthRange, lastDayOfMonth, weekday } from '../shared/calendar.js';
 
 export interface GeneratorContext {
   destinations: Map<number, Destination>;
@@ -65,8 +65,6 @@ interface Day {
   date: string;
   index: number;
   month: string;
-  driving: boolean; // regular working day
-  holiday: boolean; // public holiday on a weekday
   seq: number[]; // stops visited this day (empty = no driving)
   kind: DayKind | null; // null = nothing planned yet
   label: string;
@@ -84,8 +82,25 @@ interface Unit {
   template?: TripTemplate;
 }
 
+/**
+ * Generates a record. When the random choices leave a remainder the routes cannot fill exactly,
+ * a few neighbouring seeds are tried and the first exact one (or the closest) is returned; its
+ * seed reproduces it.
+ */
 export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateResult {
-  const seed = req.seed ?? Math.floor(Math.random() * 1e9);
+  const first = req.seed ?? Math.floor(Math.random() * 1e9);
+  let best: (GenerateResult & { mismatch: number }) | null = null;
+  for (let i = 0; i < 8; i++) {
+    const r = generateOnce({ ...req, seed: first + i }, ctx);
+    if (!best || r.mismatch < best.mismatch) best = r;
+    if (r.mismatch < 1) break;
+  }
+  const { mismatch: _m, ...result } = best!;
+  return result;
+}
+
+function generateOnce(req: GenerateRequest, ctx: GeneratorContext): GenerateResult & { mismatch: number } {
+  const seed = req.seed!;
   const rnd = mulberry32(seed);
   const warnings: string[] = [];
   const base = req.baseDestinationId;
@@ -110,9 +125,8 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   // ---------- calendar ----------
   const days: Day[] = [];
   for (let d = firstDate, i = 0; d <= lastDate; d = addDays(d, 1), i++) {
-    const driving = isDrivingDay(d);
     days.push({
-      date: d, index: i, month: monthOf(d), driving, holiday: !driving && isoWeekday(d) <= 5,
+      date: d, index: i, month: monthOf(d),
       seq: [], kind: null, label: '', unitId: '', segment: 0,
     });
   }
@@ -144,7 +158,11 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
       if (r && (r.fromId === base || r.toId === base) && r.fromId !== r.toId) units.push({ key: `r:${r.id}`, label: r.name, rule, route: r });
     } else {
       const t = ctx.templates.get(rule.id);
-      if (t?.days.length) units.push({ key: `t:${t.id}`, label: t.name, rule, template: t });
+      if (!t?.days.length) continue;
+      // a multi-day trip cannot be counted per day, and per week only if it fits into a week
+      const len = t.days.reduce((n, d) => n + Math.max(1, d.repeat || 1), 0);
+      const period = (rule.period === 'day' && len > 1) || (rule.period === 'week' && len > 7) ? 'month' : rule.period;
+      units.push({ key: `t:${t.id}`, label: t.name, rule: { ...rule, period }, template: t });
     }
   }
   const visitsIn = (seq: number[]) => seq.filter((id) => id !== base);
@@ -256,10 +274,11 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     return (occurrences.get(u.key) ?? []).every((o) => start - o.end > g || o.start - (start + len - 1) > g);
   };
   /** May the unit start on this day? Its weekday rule, else working days (Saturday only as a fallback). */
-  const startDayOk = (u: Unit, d: Day, allowSpare: boolean) => {
-    if (d.holiday) return false;
-    if (u.rule.weekdays.length) return u.rule.weekdays.includes(isoWeekday(d.date));
-    return d.driving || (allowSpare && isoWeekday(d.date) === 6);
+  const startDayOk = (u: Unit, d: Day, len: number) => {
+    if (u.rule.weekdays.length && !u.rule.weekdays.includes(isoWeekday(d.date))) return false;
+    const end = days[d.index + len - 1];
+    if (len > 1 && u.rule.endWeekdays?.length && (!end || !u.rule.endWeekdays.includes(isoWeekday(end.date)))) return false;
+    return true;
   };
   /** Once a day per place, unless the route's own rule allows more per day. */
   const perDayOk = (u: Unit, d: Day, visits: number[]) => {
@@ -311,23 +330,22 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     d.segment >= 0 && (scope.seg == null || d.segment === scope.seg) && (!scope.inBucket || scope.inBucket(d));
 
   /** Days a one-day route could go on. */
-  const oneDayCandidates = (u: Unit, scope: Scope, allowSpare: boolean) => {
+  const oneDayCandidates = (u: Unit, scope: Scope) => {
     const visits = routeVisits(u.route!);
     return days.filter((d) =>
       inScope(d, scope) && (d.kind === null || d.kind === 'free') && journeysOf(d.seq).length < MAX_JOURNEYS_PER_DAY &&
-      startDayOk(u, d, allowSpare) && capOk(u, d.date) && gapOk(u, d.index, 1) && perDayOk(u, d, visits));
+      startDayOk(u, d, 1) && capOk(u, d.date) && gapOk(u, d.index, 1) && perDayOk(u, d, visits));
   };
 
   const placeOneDay = (u: Unit, scope: Scope, noMerge: boolean): boolean => {
     const visits = routeVisits(u.route!);
-    for (const allowSpare of [false, true]) {
-      const cand = oneDayCandidates(u, scope, allowSpare);
-      if (!cand.length) continue;
+    {
+      const cand = oneDayCandidates(u, scope);
+      if (!cand.length) return false;
       const merges = new Map(cand.map((d) => [d, noMerge ? null : mergeOption(d, visits)]));
       const day = pick(cand, (d) => {
         let w = d.kind ? 1 / (1 + journeysOf(d.seq).length * 6) : 1;
         if (merges.get(d)) w *= 1 + tourP * 12;
-        if (!d.driving) w *= 0.3;
         // spread repeat visits: the same place on neighbouring days is less likely
         for (let k = 1; k <= 3; k++) {
           for (const n of [days[d.index - k], days[d.index + k]]) {
@@ -351,14 +369,14 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   /** A template: several consecutive days, all free. */
   const placeSpan = (u: Unit, scope: Scope): boolean => {
     const seqs = expandTemplate(u.template!);
-    for (const allowSpare of [false, true]) {
+    {
       const starts = days.filter((d) => {
         if (!inScope(d, scope) || !spanFree(d.index, seqs.length)) return false;
         if (days.slice(d.index, d.index + seqs.length).some((x) => x.segment !== d.segment)) return false;
-        return startDayOk(u, d, allowSpare) && capOk(u, d.date) && gapOk(u, d.index, seqs.length);
+        return startDayOk(u, d, seqs.length) && capOk(u, d.date) && gapOk(u, d.index, seqs.length);
       });
       const start = pick(starts);
-      if (!start) continue;
+      if (!start) return false;
       const unit = newUnit();
       seqs.forEach((seq, i) => {
         const day = days[start.index + i];
@@ -395,6 +413,7 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   });
 
   // ---------- step 2: fill every segment up to its target ----------
+  let mismatch = 0; // largest odometer difference (km) of a segment
   const simple = free.filter((u) => !u.template);
   const maxUnits = Math.max(0, ...simple.map(unitUnits));
   segments.forEach((seg, s) => {
@@ -418,7 +437,7 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
       const items: { u: Unit; n: number; units: number }[] = [];
       for (const u of simple) {
         const uu = unitUnits(u);
-        let cap = Math.min(oneDayCandidates(u, { seg: s }, true).length, Math.ceil(rest / uu) + 1);
+        let cap = Math.min(oneDayCandidates(u, { seg: s }).length, Math.ceil(rest / uu) + 1);
         for (let p = 1; cap > 0; p *= 2) {
           const n = Math.min(p, cap);
           items.push({ u, n, units: n * uu });
@@ -446,6 +465,7 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     }
 
     const diff = (seg.used - seg.target) / UNIT;
+    mismatch = Math.max(mismatch, Math.abs(diff));
     if (Math.abs(diff) >= 1) {
       warnings.push(
         `${seg.label}: a kiválasztott utakkal ${Math.abs(diff).toFixed(1)} km-rel ${diff < 0 ? 'kevesebb' : 'több'} jött ki, mint a km-óra szerinti futás. Adj hozzá több utat, vagy lazíts a szabályokon.`,
@@ -462,8 +482,6 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     const dayKm = seqUnits(d.seq) / UNIT;
     if (dayKm > LONG_DAY_KM) warnings.push(`${d.date}: ${dayKm.toFixed(0)} km egy nap alatt — ez sok lehet. Többnapos útra használj utazás-sablont.`);
   }
-  const satUsed = days.filter((d) => d.kind === 'free' && isoWeekday(d.date) === 6).length;
-  if (satUsed && free.every((u) => !u.rule.weekdays.includes(6))) warnings.push(`${satUsed} szombati napra is került út, mert a hétköznapok beteltek.`);
   if (where !== base) warnings.push(`Az időszak végén az autó nem a telephelyen áll (${name(where)}).`);
   for (const u of units) {
     if (u.rule.max != null && u.rule.min != null && u.rule.min > u.rule.max) warnings.push(`„${u.label}”: a minimum nagyobb a maximumnál.`);
@@ -500,5 +518,5 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   }
 
   const totalKm = Math.round(result.reduce((s, m) => s + m.totalKm, 0) * 10) / 10;
-  return { months: result, days: plans, totalKm, targetKm: req.endOdometer - req.startOdometer, warnings, seed };
+  return { months: result, days: plans, totalKm, targetKm: req.endOdometer - req.startOdometer, warnings, seed, mismatch };
 }
