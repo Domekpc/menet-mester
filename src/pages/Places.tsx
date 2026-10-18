@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { PlaceSearch, type PlacePick } from '../components/PlaceSearch';
 import { RouteMap } from '../components/RouteMap';
 import { Empty, Field, Modal, PageHead, useConfirm, useToast } from '../components/ui';
-import { BASE, type Company, type Destination, type Route, type RouteCalc, type TripTemplate } from '../../shared/types';
+import type { Company, Destination, Route, RouteCalc } from '../../shared/types';
 
 export function PlacesPage() {
   const dests = useCollection<Destination>('destinations');
@@ -12,7 +12,6 @@ export function PlacesPage() {
   const companies = useCollection<Company>('companies');
   // a route always starts or ends at a telephely; anything else is a trip template
   const homeIds = useMemo(() => new Set(companies.items.map((c) => c.homeDestinationId).filter((x): x is number => x != null)), [companies.items]);
-  const touchesHome = (r: Route) => homeIds.has(r.fromId) || homeIds.has(r.toId);
   const [tab, setTab] = useState<'routes' | 'places'>('routes');
   const [selRoute, setSelRoute] = useState<number | null>(null);
   const [selPlace, setSelPlace] = useState<number | null>(null);
@@ -76,19 +75,6 @@ export function PlacesPage() {
                 <div className="route-line"><b>{byId.get(r.fromId)?.name}</b><span className="arrow">→</span><b>{byId.get(r.toId)?.name}</b></div>
                 <small className="muted">{r.name}</small>
               </div>
-              {homeIds.size > 0 && !touchesHome(r) && (
-                <button className="btn btn-sm" title="Telephely nélküli út nem használható — utazás-sablonként igen"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (!(await confirm('Sablonná alakítás', `A(z) „${r.name}” nem a telephelyről indul, ezért útként nem használható. Utazás-sablon lesz belőle (Telephely → ${byId.get(r.fromId)?.name} → ${byId.get(r.toId)?.name} → Telephely), az út pedig törlődik. A sablont utána bővítheted, pl. több napra.`, 'Sablonná alakítás'))) return;
-                    await api<TripTemplate>('/api/templates', { method: 'POST', json: {
-                      name: r.name, startWeekdays: [], minPerMonth: null, maxPerMonth: null, onlyDates: [], note: '',
-                      days: [{ stops: [BASE, r.fromId, r.toId, BASE], repeat: 1 }],
-                    } });
-                    await routes.remove(r.id);
-                    toast('Sablon létrehozva az Utazás-sablonok között');
-                  }}><Icon name="calendar" />Sablonná alakítás</button>
-              )}
               <span className="kpi-km">{fmtKm(r.distanceKm)} km</span>
               <div className="actions">
                 <button className="btn btn-ghost icon-btn" aria-label="Szerkesztés" onClick={(e) => { e.stopPropagation(); setRouteForm(r); }}><Icon name="edit" /></button>
