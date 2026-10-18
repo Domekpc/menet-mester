@@ -4,7 +4,6 @@ const paths: Record<string, string> = {
   route: 'M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM6 15V9a4 4 0 0 1 4-4h4M18 9v6a4 4 0 0 1-4 4h-4',
   pin: 'M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
   building: 'M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16M16 9h2a2 2 0 0 1 2 2v10M2 21h20M8 7h4M8 11h4M8 15h4',
-  car: 'M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2M9 17h6M5 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0',
   wrench: 'M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.5-.7-.7-2.5z',
   sparkles: 'M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z',
@@ -30,7 +29,32 @@ const paths: Record<string, string> = {
   swap: 'M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7',
 };
 
+/**
+ * The Menet Mester car (assets/menetmester_auto_ikon.svg). It is drawn on a wider canvas, so the
+ * stroke is kept at the same on-screen weight as the other icons; the colour comes from the context.
+ */
+function CarIcon({ size }: { size?: number }) {
+  const line = { vectorEffect: 'non-scaling-stroke' as const };
+  return (
+    <svg viewBox="4 4 120 62" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+      style={size ? { width: size, height: size } : undefined} aria-hidden="true">
+      <g style={line}>
+        <path style={line} d="M21 53H13c-4.4 0-7-2.8-7-7v-5c0-4.6 2.7-7.6 7-8.8l12-3.2 11-13.2c3.1-3.8 6.7-5.6 11.8-5.6h31.3c5.9 0 10.3 2.3 13.8 7.3L103 30l11 2.8c5.4 1.4 8 4.5 8 9.2v4c0 4.3-2.8 7-7 7h-9" />
+        <path style={line} d="M85 53H42" />
+        <circle style={line} cx="31.5" cy="53" r="10.5" />
+        <circle style={line} cx="95.5" cy="53" r="10.5" />
+        <circle style={line} cx="31.5" cy="53" r="3.2" />
+        <circle style={line} cx="95.5" cy="53" r="3.2" />
+        <path style={line} d="M33 29h30V16H49.2c-3.4 0-5.6 1-7.7 3.4L33 29Z" />
+        <path style={line} d="M69 16v13h26.2l-8.1-10.1c-1.7-2.1-4-2.9-7-2.9H69Z" />
+        <path style={line} d="M67 35v10M51 36h7M77 36h7M8 40h9M112 40h9" />
+      </g>
+    </svg>
+  );
+}
+
 export function Icon({ name, size }: { name: keyof typeof paths | string; size?: number }) {
+  if (name === 'car') return <CarIcon size={size} />;
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
       style={size ? { width: size, height: size } : undefined} aria-hidden="true">
