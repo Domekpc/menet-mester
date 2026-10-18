@@ -192,6 +192,12 @@ describe('generate', () => {
     }
   });
 
+  it('fits a weekly template minimum even when a route needs a visit every week', () => {
+    const r = generate({ ...base, endOdometer: 13500, rules: [rule(10), rule(11, { period: 'week', min: 1, max: 2 }), rule(12), tpl(30, { min: 1, max: 1, weekdays: [1], endWeekdays: [5] })] }, ctx);
+    expect(r.days.filter((d) => d.ruleKey === 't:30').length).toBe(3);
+    expect(r.warnings).toEqual([]);
+  });
+
   it('reports a template whose departure and arrival days cannot match', () => {
     const r = generate({ ...base, rules: [...base.rules, tpl(30, { min: 1, weekdays: [1], endWeekdays: [3] })] }, ctx);
     expect(r.days.some((d) => d.ruleKey === 't:30')).toBe(false);

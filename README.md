@@ -18,7 +18,11 @@ npm run dev
 A felület: http://localhost:5173 (az API a 3001-es porton fut, a Vite proxyzza). Az adatbázis a
 `data/menet-mester.db` fájlban jön létre, első indításkor a minta cég, jármű, sofőr és utak betöltődnek.
 
-Éles futtatás: `npm run build && npm start` (az Express szolgálja ki a `dist` mappát is).
+Éles futtatás saját gépen: `npm run build && npm start` (az Express szolgálja ki a `dist` mappát is).
+
+Felhőben, ingyen: Vercel + Neon Postgres, jelszavas belépéssel — lépésről lépésre a [DEPLOY.md](DEPLOY.md)
+leírja. Ha a `DATABASE_URL` be van állítva, az alkalmazás Postgrest használ, különben a helyi SQLite-fájlt;
+ha az `APP_PASSWORD` be van állítva, belépést kér.
 
 ## Hogyan működik
 

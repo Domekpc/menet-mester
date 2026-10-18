@@ -1,5 +1,4 @@
-import { db } from './db.js';
-import type { SQLInputValue } from 'node:sqlite';
+import { getDb } from './db.js';
 import { distanceMatrix, geocode } from './geo.js';
 import type {
   Company, Destination, Driver, GenerateRequest, Route, SavedReport, TripTemplate, Vehicle, VehicleEvent,
@@ -8,28 +7,24 @@ import { BASE } from '../shared/types.js';
 
 // Column mapping between snake_case tables and camelCase API objects.
 type Mapping = Record<string, string>;
+type Row = Record<string, unknown>;
 
 function entity<T extends { id: number }>(table: string, map: Mapping) {
   const cols = Object.keys(map);
-  const toRow = (o: Partial<T>) => cols.map((c) => ((o as Record<string, unknown>)[c] ?? null) as SQLInputValue);
-  const fromRow = (r: Record<string, unknown>) =>
-    Object.fromEntries([['id', r.id], ...cols.map((c) => [c, r[map[c]]])]) as T;
+  const toRow = (o: Partial<T>) => cols.map((c) => (o as Row)[c] ?? null);
+  const fromRow = (r: Row) => Object.fromEntries([['id', Number(r.id)], ...cols.map((c) => [c, r[map[c]] ?? null])]) as T;
   const colList = cols.map((c) => map[c]).join(', ');
   return {
-    list: () => (db.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[]).map(fromRow),
-    get: (id: number) => {
-      const r = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    list: async () => (await (await getDb()).all<Row>(`SELECT * FROM ${table} ORDER BY id`)).map(fromRow),
+    get: async (id: number) => {
+      const r = await (await getDb()).get<Row>(`SELECT * FROM ${table} WHERE id = ?`, [id]);
       return r ? fromRow(r) : undefined;
     },
-    create: (o: Partial<T>) => {
-      const id = db
-        .prepare(`INSERT INTO ${table} (${colList}) VALUES (${cols.map(() => '?').join(', ')})`)
-        .run(...toRow(o)).lastInsertRowid;
-      return Number(id);
-    },
-    update: (id: number, o: Partial<T>) =>
-      db.prepare(`UPDATE ${table} SET ${cols.map((c) => `${map[c]} = ?`).join(', ')} WHERE id = ?`).run(...toRow(o), id),
-    remove: (id: number) => db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id),
+    create: async (o: Partial<T>) =>
+      (await getDb()).insert(`INSERT INTO ${table} (${colList}) VALUES (${cols.map(() => '?').join(', ')})`, toRow(o)),
+    update: async (id: number, o: Partial<T>) =>
+      (await getDb()).run(`UPDATE ${table} SET ${cols.map((c) => `${map[c]} = ?`).join(', ')} WHERE id = ?`, [...toRow(o), id]),
+    remove: async (id: number) => (await getDb()).run(`DELETE FROM ${table} WHERE id = ?`, [id]),
   };
 }
 
@@ -49,25 +44,24 @@ export const vehicleEvents = entity<VehicleEvent>('vehicle_events', {
   odometer: 'odometer', note: 'note', source: 'source',
 });
 
+const now = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+
 export const reports = {
-  list: () =>
-    (db.prepare('SELECT id, title, created_at FROM reports ORDER BY id DESC').all() as {
-      id: number; title: string; created_at: string;
-    }[]).map((r) => ({ id: r.id, title: r.title, createdAt: r.created_at })),
-  get: (id: number): SavedReport | undefined => {
-    const r = db.prepare('SELECT * FROM reports WHERE id = ?').get(id) as Record<string, string> | undefined;
+  list: async () =>
+    (await (await getDb()).all<{ id: number; title: string; created_at: string }>('SELECT id, title, created_at FROM reports ORDER BY id DESC'))
+      .map((r) => ({ id: Number(r.id), title: r.title, createdAt: r.created_at })),
+  get: async (id: number): Promise<SavedReport | undefined> => {
+    const r = await (await getDb()).get<Record<string, string>>('SELECT * FROM reports WHERE id = ?', [id]);
     if (!r) return undefined;
     return {
       id: Number(r.id), title: r.title, createdAt: r.created_at,
       request: JSON.parse(r.request), result: JSON.parse(r.result), fuelPrices: JSON.parse(r.fuel_prices),
     };
   },
-  create: (r: Omit<SavedReport, 'id' | 'createdAt'>) =>
-    Number(
-      db.prepare('INSERT INTO reports (title, request, result, fuel_prices) VALUES (?, ?, ?, ?)')
-        .run(r.title, JSON.stringify(r.request), JSON.stringify(r.result), JSON.stringify(r.fuelPrices)).lastInsertRowid,
-    ),
-  remove: (id: number) => db.prepare('DELETE FROM reports WHERE id = ?').run(id),
+  create: async (r: Omit<SavedReport, 'id' | 'createdAt'>) =>
+    (await getDb()).insert('INSERT INTO reports (title, created_at, request, result, fuel_prices) VALUES (?, ?, ?, ?, ?)',
+      [r.title, now(), JSON.stringify(r.request), JSON.stringify(r.result), JSON.stringify(r.fuelPrices)]),
+  remove: async (id: number) => (await getDb()).run('DELETE FROM reports WHERE id = ?', [id]),
 };
 
 /** Coordinates of a destination, geocoding and storing them on first use. */
@@ -75,14 +69,14 @@ export async function coordsOf(d: Destination) {
   if (d.lat != null && d.lon != null) return { lat: d.lat, lon: d.lon };
   const c = await geocode(d.address);
   if (!c) throw new Error(`Nem sikerült a címet térképen megtalálni: ${d.name} (${d.address})`);
-  db.prepare('UPDATE destinations SET lat = ?, lon = ? WHERE id = ?').run(c.lat, c.lon, d.id);
+  await (await getDb()).run('UPDATE destinations SET lat = ?, lon = ? WHERE id = ?', [c.lat, c.lon, d.id]);
   d.lat = c.lat;
   d.lon = c.lon;
   return c;
 }
 
 export const templates = (() => {
-  const fromRow = (r: Record<string, unknown>): TripTemplate => ({
+  const fromRow = (r: Row): TripTemplate => ({
     id: Number(r.id),
     name: String(r.name),
     startWeekdays: JSON.parse(String(r.start_weekdays)),
@@ -98,16 +92,16 @@ export const templates = (() => {
   ];
   const cols = 'name, start_weekdays, days, min_per_month, max_per_month, only_dates, note';
   return {
-    list: () => (db.prepare('SELECT * FROM trip_templates ORDER BY id').all() as Record<string, unknown>[]).map(fromRow),
-    get: (id: number) => {
-      const r = db.prepare('SELECT * FROM trip_templates WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    list: async () => (await (await getDb()).all<Row>('SELECT * FROM trip_templates ORDER BY id')).map(fromRow),
+    get: async (id: number) => {
+      const r = await (await getDb()).get<Row>('SELECT * FROM trip_templates WHERE id = ?', [id]);
       return r ? fromRow(r) : undefined;
     },
-    create: (t: Partial<TripTemplate>) =>
-      Number(db.prepare(`INSERT INTO trip_templates (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(...values(t)).lastInsertRowid),
-    update: (id: number, t: Partial<TripTemplate>) =>
-      db.prepare(`UPDATE trip_templates SET ${cols.split(', ').map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).run(...values(t), id),
-    remove: (id: number) => db.prepare('DELETE FROM trip_templates WHERE id = ?').run(id),
+    create: async (t: Partial<TripTemplate>) =>
+      (await getDb()).insert(`INSERT INTO trip_templates (${cols}) VALUES (?, ?, ?, ?, ?, ?, ?)`, values(t)),
+    update: async (id: number, t: Partial<TripTemplate>) =>
+      (await getDb()).run(`UPDATE trip_templates SET ${cols.split(', ').map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, [...values(t), id]),
+    remove: async (id: number) => (await getDb()).run('DELETE FROM trip_templates WHERE id = ?', [id]),
   };
 })();
 
@@ -116,9 +110,8 @@ export const templates = (() => {
  * direction), the rest comes from one routing-service distance matrix.
  */
 export async function resolveLegs(req: GenerateRequest) {
-  const allRoutes = routes.list();
-  const allTemplates = templates.list();
-  const destMap = new Map(destinations.list().map((d) => [d.id, d]));
+  const [allRoutes, allTemplates, allDests] = await Promise.all([routes.list(), templates.list(), destinations.list()]);
+  const destMap = new Map(allDests.map((d) => [d.id, d]));
   const base = req.baseDestinationId;
   const real = (id: number) => (id === BASE ? base : id);
 

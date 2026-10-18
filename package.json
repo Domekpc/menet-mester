@@ -9,12 +9,14 @@
     "start": "NODE_ENV=production NODE_OPTIONS='--experimental-sqlite --disable-warning=ExperimentalWarning' tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "api": "NODE_OPTIONS='--experimental-sqlite --disable-warning=ExperimentalWarning' tsx server/index.ts"
+    "api": "NODE_OPTIONS='--experimental-sqlite --disable-warning=ExperimentalWarning' tsx server/index.ts",
+    "migrate:pg": "NODE_OPTIONS='--experimental-sqlite --disable-warning=ExperimentalWarning' tsx scripts/migrate-to-postgres.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "leaflet": "^1.9.4",
+    "pg": "^8.23.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.4",
@@ -24,6 +26,7 @@
     "@types/express": "^5.0.6",
     "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
@@ -34,6 +37,6 @@
     "vitest": "^5.0.5"
   },
   "engines": {
-    "node": ">=22.5"
+    "node": "22.x"
   }
 }

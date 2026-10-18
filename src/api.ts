@@ -8,10 +8,14 @@ export async function api<T>(url: string, init?: RequestInit & { json?: unknown 
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && data.auth) window.dispatchEvent(new Event(AUTH_EVENT));
     throw new Error(data.error ?? `Hiba történt (${res.status})`);
   }
   return res.json();
 }
+
+/** Fired when the server asks for the password (session expired or never logged in). */
+export const AUTH_EVENT = 'menet-mester:auth-required';
 
 /** List + CRUD helpers for one REST collection. */
 export function useCollection<T extends { id: number }>(name: string) {
@@ -46,6 +50,7 @@ export function useCollection<T extends { id: number }>(name: string) {
 
 export async function download(url: string, body: unknown, fallbackName: string) {
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) window.dispatchEvent(new Event(AUTH_EVENT));
   if (!res.ok) throw new Error('Az exportálás nem sikerült');
   const blob = await res.blob();
   const cd = res.headers.get('Content-Disposition') ?? '';

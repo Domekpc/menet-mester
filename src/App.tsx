@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { Icon } from './components/Icon';
+import { useAuth } from './components/AuthGate';
 import { HomePage } from './pages/Home';
 import { MasterDataPage } from './pages/MasterData';
 import { PlacesPage } from './pages/Places';
@@ -21,6 +22,7 @@ const data = [
 ];
 
 export function App() {
+  const { authRequired, logout } = useAuth();
   return (
     <div className="shell">
       <aside className="side">
@@ -38,7 +40,10 @@ export function App() {
             <NavLink key={n.to} to={n.to}><Icon name={n.icon} />{n.label}</NavLink>
           ))}
         </nav>
-        <div className="side-foot">Térkép: © OpenStreetMap közreműködők</div>
+        <div className="side-foot">
+          {authRequired && <button className="btn btn-sm btn-ghost logout" onClick={logout}><Icon name="arrowLeft" />Kijelentkezés</button>}
+          <div>Térkép: © OpenStreetMap közreműködők</div>
+        </div>
       </aside>
       <main className="main">
         <Routes>

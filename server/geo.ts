@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { getDb } from './db.js';
 import type { GeoSuggestion, RouteCalc } from '../shared/types.js';
 
 // Free OpenStreetMap based services: Photon (search-as-you-type geocoder) and OSRM (routing).
@@ -12,14 +12,13 @@ const COUNTRIES: Record<string, string> = {
 };
 const UA = 'menet-mester/0.1 (utnyilvantarto)';
 
-const getCache = db.prepare('SELECT value FROM geo_cache WHERE key = ?');
-const setCache = db.prepare('INSERT OR REPLACE INTO geo_cache (key, value) VALUES (?, ?)');
-
+/** Results of the free map services are kept in the database, so each lookup is made only once. */
 async function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
-  const hit = getCache.get(key) as { value: string } | undefined;
+  const db = await getDb();
+  const hit = await db.get<{ value: string }>('SELECT value FROM geo_cache WHERE key = ?', [key]);
   if (hit) return JSON.parse(hit.value) as T;
   const value = await load();
-  setCache.run(key, JSON.stringify(value));
+  await db.run('INSERT INTO geo_cache (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', [key, JSON.stringify(value)]);
   return value;
 }
 

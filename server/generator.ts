@@ -393,7 +393,9 @@ function generateOnce(req: GenerateRequest, ctx: GeneratorContext): GenerateResu
 
   // ---------- step 1: minimums per day / week / month ----------
   const PERIOD_TEXT = { day: 'napi', week: 'heti', month: 'havi' } as const;
-  for (const u of free) {
+  // multi-day templates first: they need whole free stretches, one-day routes fit in around them
+  const byLength = [...free].sort((a, b) => unitSeqs(b).length - unitSeqs(a).length);
+  for (const u of byLength) {
     if (!u.rule.min) continue;
     const buckets = [...new Set(days.map((d) => bucketOf(d.date, u.rule.period)))];
     let missed = 0;
