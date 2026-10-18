@@ -4,11 +4,15 @@ import { Icon } from '../components/Icon';
 import { PlaceSearch, type PlacePick } from '../components/PlaceSearch';
 import { RouteMap } from '../components/RouteMap';
 import { Empty, Field, Modal, PageHead, useConfirm, useToast } from '../components/ui';
-import type { Destination, Route, RouteCalc } from '../../shared/types';
+import { BASE, type Company, type Destination, type Route, type RouteCalc, type TripTemplate } from '../../shared/types';
 
 export function PlacesPage() {
   const dests = useCollection<Destination>('destinations');
   const routes = useCollection<Route>('routes');
+  const companies = useCollection<Company>('companies');
+  // a route always starts or ends at a telephely; anything else is a trip template
+  const homeIds = useMemo(() => new Set(companies.items.map((c) => c.homeDestinationId).filter((x): x is number => x != null)), [companies.items]);
+  const touchesHome = (r: Route) => homeIds.has(r.fromId) || homeIds.has(r.toId);
   const [tab, setTab] = useState<'routes' | 'places'>('routes');
   const [selRoute, setSelRoute] = useState<number | null>(null);
   const [selPlace, setSelPlace] = useState<number | null>(null);
@@ -72,6 +76,19 @@ export function PlacesPage() {
                 <div className="route-line"><b>{byId.get(r.fromId)?.name}</b><span className="arrow">→</span><b>{byId.get(r.toId)?.name}</b></div>
                 <small className="muted">{r.name}</small>
               </div>
+              {homeIds.size > 0 && !touchesHome(r) && (
+                <button className="btn btn-sm" title="Telephely nélküli út nem használható — utazás-sablonként igen"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!(await confirm('Sablonná alakítás', `A(z) „${r.name}” nem a telephelyről indul, ezért útként nem használható. Utazás-sablon lesz belőle (Telephely → ${byId.get(r.fromId)?.name} → ${byId.get(r.toId)?.name} → Telephely), az út pedig törlődik. A sablont utána bővítheted, pl. több napra.`, 'Sablonná alakítás'))) return;
+                    await api<TripTemplate>('/api/templates', { method: 'POST', json: {
+                      name: r.name, startWeekdays: [], minPerMonth: null, maxPerMonth: null, onlyDates: [], note: '',
+                      days: [{ stops: [BASE, r.fromId, r.toId, BASE], repeat: 1 }],
+                    } });
+                    await routes.remove(r.id);
+                    toast('Sablon létrehozva az Utazás-sablonok között');
+                  }}><Icon name="calendar" />Sablonná alakítás</button>
+              )}
               <span className="kpi-km">{fmtKm(r.distanceKm)} km</span>
               <div className="actions">
                 <button className="btn btn-ghost icon-btn" aria-label="Szerkesztés" onClick={(e) => { e.stopPropagation(); setRouteForm(r); }}><Icon name="edit" /></button>
@@ -131,7 +148,7 @@ export function PlacesPage() {
       </div>
 
       {routeForm && (
-        <RouteForm initial={routeForm} destinations={dests.items} onClose={() => setRouteForm(null)}
+        <RouteForm initial={routeForm} destinations={dests.items} homeIds={homeIds} onClose={() => setRouteForm(null)}
           onSaved={async (r) => { await dests.reload(); await routes.reload(); setRouteForm(null); setTab('routes'); setSelRoute(r.id); toast('Út mentve'); }} />
       )}
       {placeForm && (
@@ -188,11 +205,11 @@ type End = { saved?: Destination; newName?: string; text: string; lat?: number; 
 
 const endFrom = (d?: Destination): End => (d ? { saved: d, text: d.name, lat: d.lat ?? undefined, lon: d.lon ?? undefined } : { text: '' });
 
-function RouteForm({ initial, destinations, onClose, onSaved }: {
-  initial: Partial<Route>; destinations: Destination[]; onClose: () => void; onSaved: (r: Route) => Promise<void>;
+function RouteForm({ initial, destinations, homeIds, onClose, onSaved }: {
+  initial: Partial<Route>; destinations: Destination[]; homeIds: Set<number>; onClose: () => void; onSaved: (r: Route) => Promise<void>;
 }) {
   const find = (id?: number) => destinations.find((d) => d.id === id);
-  const [from, setFrom] = useState<End>(() => endFrom(find(initial.fromId)));
+  const [from, setFrom] = useState<End>(() => endFrom(find(initial.fromId ?? (initial.id ? undefined : [...homeIds][0]))));
   const [to, setTo] = useState<End>(() => endFrom(find(initial.toId)));
   const [km, setKm] = useState<string>(initial.distanceKm != null ? String(initial.distanceKm).replace('.', ',') : '');
   const [kmTouched, setKmTouched] = useState(!!initial.id);
@@ -242,6 +259,9 @@ function RouteForm({ initial, destinations, onClose, onSaved }: {
     if (!ready(from) || !ready(to)) return setError('Válaszd ki mindkét végpontot a listából.');
     if (!(dist > 0)) return setError('Adj meg érvényes távolságot.');
     if (!label(from).trim() || !label(to).trim()) return setError('Nevezd el az új úticélokat.');
+    if (homeIds.size && !homeIds.has(from.saved?.id ?? -1) && !homeIds.has(to.saved?.id ?? -1)) {
+      return setError('Az út egyik végpontja a telephely legyen. Telephely nélküli utat utazás-sablonként vegyél fel.');
+    }
     setSaving(true);
     try {
       const ensure = async (e: End) => e.saved?.id ?? (await api<Destination>('/api/destinations', {
@@ -278,7 +298,7 @@ function RouteForm({ initial, destinations, onClose, onSaved }: {
   );
 
   return (
-    <Modal wide title={initial.id ? 'Út szerkesztése' : 'Új út'} subtitle="Válassz mentett úticélt, vagy írj be bármilyen címet — a legrövidebb autós útvonalat kiszámoljuk." onClose={onClose}
+    <Modal wide title={initial.id ? 'Út szerkesztése' : 'Új út'} subtitle="Az út a telephelyről indul vagy oda érkezik; a másik végpont lehet mentett úticél vagy bármilyen cím — a legrövidebb autós útvonalat kiszámoljuk. A visszautat a generátor magától hozzáteszi." onClose={onClose}
       footer={<>
         {error && <span className="error-text" style={{ marginRight: 'auto' }}>{error}</span>}
         <button className="btn btn-ghost" onClick={onClose}>Mégse</button>

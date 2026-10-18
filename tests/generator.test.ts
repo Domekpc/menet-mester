@@ -23,6 +23,7 @@ const routes: Route[] = [
   { id: 12, name: 'OTP', fromId: 1, toId: 5, distanceKm: 3.4 },
   { id: 13, name: 'SAB', fromId: 1, toId: 6, distanceKm: 329 },
   { id: 14, name: 'Könyvelő', fromId: 1, toId: 8, distanceKm: 3.2 },
+  { id: 15, name: 'SAB → Aichegg', fromId: 6, toId: 7, distanceKm: 14 },
 ];
 const week: TripTemplate = {
   id: 30, name: 'Deutschlandsbergi hét', startWeekdays: [1], minPerMonth: null, maxPerMonth: null, onlyDates: [], note: '',
@@ -115,6 +116,12 @@ describe('generate', () => {
   it('only uses the allowed weekdays', () => {
     const r = generate({ ...base, rules: [rule(10, { weekdays: [2, 4] }), rule(11, { weekdays: [2, 4] })], endOdometer: 10300 }, ctx);
     for (const d of r.days) expect([2, 4]).toContain(((new Date(d.date + 'T00:00:00Z').getUTCDay() + 6) % 7) + 1);
+  });
+
+  it('ignores routes that do not start or end at the base', () => {
+    const r = generate({ ...base, rules: [...base.rules, rule(15)] }, ctx);
+    expect(r.days.some((d) => d.stops.includes(7))).toBe(false);
+    expect(Math.abs(r.totalKm - 600)).toBeLessThan(1);
   });
 
   it('chains nearby places into one tour when tours are frequent', () => {

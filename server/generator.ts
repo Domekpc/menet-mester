@@ -140,7 +140,8 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   for (const rule of req.rules ?? []) {
     if (rule.kind === 'route') {
       const r = ctx.routes.get(rule.id);
-      if (r && journeyStops(base, [r.fromId, r.toId]).length >= 3) units.push({ key: `r:${r.id}`, label: r.name, rule, route: r });
+      // a route is always a trip from / to the base; anything else must be a template
+      if (r && (r.fromId === base || r.toId === base) && r.fromId !== r.toId) units.push({ key: `r:${r.id}`, label: r.name, rule, route: r });
     } else {
       const t = ctx.templates.get(rule.id);
       if (t?.days.length) units.push({ key: `t:${t.id}`, label: t.name, rule, template: t });

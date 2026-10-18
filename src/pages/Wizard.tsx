@@ -134,7 +134,7 @@ export function WizardPage() {
 
   function activeRules() {
     return [
-      ...routes.items.filter((r) => rules[`r:${r.id}`]?.on).map((r) => toUnitRule('route', r.id, rules[`r:${r.id}`])),
+      ...routes.items.filter((r) => rules[`r:${r.id}`]?.on && (r.fromId === baseId || r.toId === baseId)).map((r) => toUnitRule('route', r.id, rules[`r:${r.id}`])),
       ...templates.items.filter((t) => rules[`t:${t.id}`]?.on).map((t) => toUnitRule('template', t.id, rules[`t:${t.id}`])),
     ];
   }
@@ -455,7 +455,8 @@ function RoutesStep({
   const rule = (key: string) => rules[key] ?? normalizeRule(undefined, false);
   const set = (key: string, r: RuleState) => setRules({ ...rules, [key]: r });
   const roundTrip = (r: Route) => (r.fromId === baseId || r.toId === baseId ? r.distanceKm * 2 : null);
-  const onRoutes = routes.filter((r) => rule(`r:${r.id}`).on);
+  const baseRoutes = routes.filter((r) => r.fromId === baseId || r.toId === baseId);
+  const onRoutes = baseRoutes.filter((r) => rule(`r:${r.id}`).on);
   const avgTrip = onRoutes.length ? onRoutes.reduce((s, r) => s + (roundTrip(r) ?? r.distanceKm * 3), 0) / onRoutes.length : 0;
   const tripsNeeded = avgTrip ? targetKm / avgTrip : 0;
   const perDay = workdays ? tripsNeeded / workdays : 0;
@@ -490,17 +491,17 @@ function RoutesStep({
             <h3>Utak</h3>
             <span className="muted small">Egynapos utak a telephelyről és vissza.</span>
             <div className="spacer" />
-            <button className="btn btn-sm btn-ghost" onClick={() => setRules({ ...rules, ...Object.fromEntries(routes.map((r) => [`r:${r.id}`, { ...rule(`r:${r.id}`), on: onRoutes.length !== routes.length }])) })}>
-              {onRoutes.length === routes.length ? 'Egyik sem' : 'Mind'}
+            <button className="btn btn-sm btn-ghost" onClick={() => setRules({ ...rules, ...Object.fromEntries(baseRoutes.map((r) => [`r:${r.id}`, { ...rule(`r:${r.id}`), on: onRoutes.length !== baseRoutes.length }])) })}>
+              {onRoutes.length === baseRoutes.length ? 'Egyik sem' : 'Mind'}
             </button>
           </div>
-          {routes.length === 0 && <p className="muted" style={{ padding: 20 }}>Nincs még út. Vegyél fel utakat az „Utak és úticélok” oldalon.</p>}
-          {routes.map((r) => {
-            const rt = roundTrip(r);
+          {baseRoutes.length === 0 && <p className="muted" style={{ padding: 20 }}>Nincs a telephelyről induló út. Vegyél fel utakat az „Utak és úticélok” oldalon.</p>}
+          {routes.filter((r) => r.fromId === baseId || r.toId === baseId).map((r) => {
+            const rt = roundTrip(r)!;
             return row(`r:${r.id}`,
               <><b>{destById.get(r.fromId)?.name}</b><span className="arrow">→</span><b>{destById.get(r.toId)?.name}</b></>,
               destById.get(r.toId)?.address ?? '',
-              rt != null ? `${fmtKm(rt)} km` : <span className="chip" title="Nem a telephelyről indul: a generátor hozzáteszi az odajutást és a hazautat">+ oda- és hazaút</span>);
+              `${fmtKm(rt)} km`);
           })}
         </div>
 
