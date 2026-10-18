@@ -29,7 +29,7 @@ const week: TripTemplate = {
   days: [{ stops: [BASE, 6], repeat: 1 }, { stops: [6, 7, 6], repeat: 3 }, { stops: [6, BASE], repeat: 1 }],
 };
 const metro: TripTemplate = {
-  id: 31, name: 'Metro', startWeekdays: [], minPerMonth: null, maxPerMonth: null, onlyDates: ['2024-05-03', '2024-06-14'], note: '',
+  id: 31, name: 'Metro', startWeekdays: [], minPerMonth: null, maxPerMonth: null, onlyDates: [], note: '',
   days: [{ stops: [BASE, 2, BASE], repeat: 1 }],
 };
 const ctx: GeneratorContext = {
@@ -117,10 +117,17 @@ describe('generate', () => {
     expect(Math.abs(r.totalKm - 2000)).toBeLessThan(1);
   });
 
-  it('puts date-bound templates only on their dates', () => {
-    const r = generate({ ...base, endOdometer: 10700, templates: [{ templateId: 31, minPerMonth: null, maxPerMonth: null }] }, ctx);
-    const pappasDays = r.days.filter((x) => x.label === 'Metro').map((x) => x.date);
-    expect(pappasDays).toEqual(['2024-05-03', '2024-06-14']);
+  it('uses a template only where it was put on the calendar unless the generator may add it', () => {
+    const plan = [
+      { id: 'a', date: '2024-05-03', type: 'template' as const, templateId: 31 },
+      { id: 'b', date: '2024-06-14', type: 'template' as const, templateId: 31 },
+    ];
+    const r = generate({ ...base, endOdometer: 10700, plan, templates: [] }, ctx);
+    expect(r.days.filter((x) => x.label === 'Metro').map((x) => x.date)).toEqual(['2024-05-03', '2024-06-14']);
+    const auto = generate({ ...base, endOdometer: 10700, plan, templates: [{ templateId: 31, minPerMonth: 2, maxPerMonth: null }] }, ctx);
+    for (const m of ['2024-04', '2024-05', '2024-06']) {
+      expect(auto.days.filter((x) => x.label === 'Metro' && x.date.startsWith(m)).length).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('places required stops and honours their odometer reading', () => {

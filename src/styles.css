@@ -317,7 +317,7 @@ tr:hover .actions, .item:hover .actions, .actions:focus-within { opacity: 1; }
 .tl-date { font-family: var(--mono); font-weight: 700; font-size: 13px; width: 116px; flex: none; white-space: nowrap; }
 
 /* route selection */
-.route-row { display: grid; grid-template-columns: 28px 1fr 90px 210px; gap: 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--paper-2); }
+.route-row { display: grid; grid-template-columns: 28px 1fr 110px 210px; gap: 14px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--paper-2); }
 .route-row:last-child { border-bottom: 0; }
 .route-row.off { opacity: 0.55; }
 .route-row .limits { display: flex; gap: 8px; align-items: center; }
@@ -477,3 +477,8 @@ input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; d
   background: var(--go); color: #fff; display: grid; place-items: center;
 }
 .lock-badge svg { stroke: #fff; }
+.route-row.tpl-rule { grid-template-columns: 28px 1fr 70px; align-items: start; }
+.tabs-sm { padding: 3px; }
+.tabs-sm button { padding: 6px 10px; font-size: 13px; }
+@media (max-width: 860px) { .route-row.tpl-rule { grid-template-columns: 28px 1fr; } }
+.route-row .kpi-km .chip { white-space: normal; font-size: 11px; line-height: 1.25; text-align: center; }

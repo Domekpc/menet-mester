@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api, fmtDate, useCollection } from '../api';
+import { api, useCollection } from '../api';
 import { Icon } from '../components/Icon';
 import { PlaceSearch } from '../components/PlaceSearch';
 import { Empty, Field, Modal, PageHead, useConfirm, useToast } from '../components/ui';
@@ -29,12 +29,8 @@ export function dayText(d: TripTemplateDay, byId: Map<number, Destination>) {
   return d.stops.length ? d.stops.map((id) => placeName(id, byId)).join(' → ') : 'az autó áll';
 }
 
-export function frequencyText(t: TripTemplate) {
-  if (t.onlyDates.length) return `csak megadott napokon (${t.onlyDates.length})`;
-  const parts = [];
-  if (t.minPerMonth) parts.push(`min. ${t.minPerMonth}`);
-  if (t.maxPerMonth != null) parts.push(`max. ${t.maxPerMonth}`);
-  return parts.length ? `havonta ${parts.join(', ')}` : 'a generátor dönti el';
+export function startText(t: TripTemplate) {
+  return t.startWeekdays.length ? `indul: ${t.startWeekdays.map((w) => WEEKDAYS[w - 1]).join(', ')}` : 'bármelyik munkanapon indulhat';
 }
 
 export function TemplatesPage() {
@@ -64,7 +60,7 @@ export function TemplatesPage() {
                 <div className="dot"><Icon name="calendar" /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h3>{t.name}</h3>
-                  <div className="muted small">{templateLength(t)} nap · {frequencyText(t)}</div>
+                  <div className="muted small">{templateLength(t)} nap · {startText(t)}</div>
                 </div>
                 <div className="actions">
                   <button className="btn btn-ghost icon-btn" aria-label="Szerkesztés" onClick={() => setEditing(t)}><Icon name="edit" /></button>
@@ -82,12 +78,6 @@ export function TemplatesPage() {
                   </div>
                 ))}
               </div>
-              {t.startWeekdays.length > 0 && (
-                <div className="row small" style={{ gap: 6 }}>
-                  <span className="muted">Indul:</span>
-                  {t.startWeekdays.map((w) => <span key={w} className="chip">{WEEKDAYS[w - 1]}</span>)}
-                </div>
-              )}
             </div>
           ))}
         </div>
@@ -111,12 +101,6 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
   const [name, setName] = useState(initial.name ?? '');
   const [weekdays, setWeekdays] = useState<number[]>(initial.startWeekdays ?? []);
   const [days, setDays] = useState<TripTemplateDay[]>(initial.days?.length ? initial.days : [{ stops: [BASE], repeat: 1 }]);
-  const [mode, setMode] = useState<'auto' | 'dates'>(initial.onlyDates?.length ? 'dates' : 'auto');
-  const [min, setMin] = useState(initial.minPerMonth != null ? String(initial.minPerMonth) : '');
-  const [max, setMax] = useState(initial.maxPerMonth != null ? String(initial.maxPerMonth) : '');
-  const [dates, setDates] = useState<string[]>(initial.onlyDates ?? []);
-  const [dateInput, setDateInput] = useState('');
-  const [paste, setPaste] = useState('');
   const [note, setNote] = useState(initial.note ?? '');
   const [adding, setAdding] = useState<number | null>(null);
   const [text, setText] = useState('');
@@ -142,18 +126,14 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
   });
   if (endOf(days.length - 1) !== BASE) hints.push('Az utolsó nap nem a telephelyen ér véget — utána az autó nem lesz otthon.');
 
-  const parseDates = (s: string) =>
-    [...s.matchAll(/(\d{4})[.\-/ ]+(\d{1,2})[.\-/ ]+(\d{1,2})/g)].map((m) => `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`);
-
   const submit = async () => {
     setErr('');
     if (!name.trim()) return setErr('Adj nevet a sablonnak.');
     if (!days.some((d) => d.stops.length > 1)) return setErr('Legalább egy napon legyen út (két hely).');
-    if (mode === 'dates' && !dates.length) return setErr('Adj meg legalább egy dátumot, vagy válaszd az automatikus gyakoriságot.');
     await onSave({
       name: name.trim(), startWeekdays: [...weekdays].sort(), days: days.map((d) => ({ stops: d.stops, repeat: Math.max(1, d.repeat || 1) })),
-      minPerMonth: mode === 'auto' && min ? Number(min) : null, maxPerMonth: mode === 'auto' && max ? Number(max) : null,
-      onlyDates: mode === 'dates' ? [...new Set(dates)].sort() : [], note: note.trim(),
+      // how often it happens is decided per generation, not stored with the template
+      minPerMonth: null, maxPerMonth: null, onlyDates: [], note: note.trim(),
     });
   };
 
@@ -228,34 +208,8 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
       </div>
 
       <div className="stack" style={{ gap: 10 }}>
-        <span className="small" style={{ fontWeight: 600, color: 'var(--ink-2)' }}>Mikor fordul elő?</span>
-        <div className="tabs">
-          <button type="button" className={mode === 'auto' ? 'on' : ''} onClick={() => setMode('auto')}>A generátor dönti el</button>
-          <button type="button" className={mode === 'dates' ? 'on' : ''} onClick={() => setMode('dates')}>Csak ezeken a napokon</button>
-        </div>
-        {mode === 'auto' ? (
-          <div className="row">
-            <Field label="Havonta legalább"><input className="input mono" style={{ width: 110 }} inputMode="numeric" placeholder="–" value={min} onChange={(e) => setMin(e.target.value.replace(/\D/g, ''))} /></Field>
-            <Field label="Havonta legfeljebb"><input className="input mono" style={{ width: 110 }} inputMode="numeric" placeholder="∞" value={max} onChange={(e) => setMax(e.target.value.replace(/\D/g, ''))} /></Field>
-          </div>
-        ) : (
-          <>
-            <p className="small muted">Pontosan ezeken a napokon indul, máskor soha — például ha számla igazolja, mikor voltál ott.</p>
-            <div className="row wrap">
-              <input type="date" className="input" style={{ width: 180 }} value={dateInput} onChange={(e) => setDateInput(e.target.value)} />
-              <button type="button" className="btn" disabled={!dateInput} onClick={() => { setDates([...new Set([...dates, dateInput])].sort()); setDateInput(''); }}><Icon name="plus" />Dátum</button>
-              <input className="input" style={{ flex: 1, minWidth: 220 }} placeholder="vagy másold be: 2024.05.03, 2024.05.24 …" value={paste}
-                onChange={(e) => setPaste(e.target.value)}
-                onBlur={() => { const p = parseDates(paste); if (p.length) { setDates([...new Set([...dates, ...p])].sort()); setPaste(''); } }} />
-            </div>
-            <div className="row wrap" style={{ gap: 6 }}>
-              {dates.map((x) => (
-                <span key={x} className="chip mono">{fmtDate(x)}<button type="button" className="chip-x" aria-label="Eltávolítás" onClick={() => setDates(dates.filter((y) => y !== x))}>×</button></span>
-              ))}
-            </div>
-          </>
-        )}
-        <Field label="Megjegyzés"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="pl. számlák alapján" /></Field>
+        <p className="small muted">Hogy havonta hányszor szerepeljen, vagy csak a naptárba húzott napokon, azt generáláskor adod meg.</p>
+        <Field label="Megjegyzés"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="pl. havi kiszállítás az osztrák partnerhez" /></Field>
       </div>
     </Modal>
   );

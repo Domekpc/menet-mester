@@ -73,7 +73,6 @@ interface Unit {
   max: number | null;
   route?: Route;
   template?: TripTemplate;
-  onlyDates: string[];
 }
 
 export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateResult {
@@ -187,16 +186,6 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     }
   }
 
-  // 4. templates that happen only on given dates (e.g. backed by invoices)
-  for (const rule of req.templates ?? []) {
-    const t = ctx.templates.get(rule.templateId);
-    for (const date of t?.onlyDates ?? []) {
-      if (date < firstDate || date > lastDate) continue;
-      if (days.some((d) => d.date === date && d.ruleKey === `t:${t!.id}`)) continue;
-      placeTemplateAt(t!, date, 'template', 'megadott dátum');
-    }
-  }
-
   // ---------- odometer checkpoints → segments ----------
   for (const c of req.checkpoints) {
     const day = dayByDate.get(c.date);
@@ -234,15 +223,15 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     const r = ctx.routes.get(rule.routeId);
     if (!r || journeyStops(base, [r.fromId, r.toId]).length < 3) continue;
     units.push({
-      key: `r:${r.id}`, label: r.name, route: r, onlyDates: [],
+      key: `r:${r.id}`, label: r.name, route: r,
       min: Math.max(0, rule.minPerMonth ?? 0), max: rule.maxPerMonth ?? null,
     });
   }
   for (const rule of req.templates ?? []) {
     const t = ctx.templates.get(rule.templateId);
-    if (!t || !t.days.length || t.onlyDates.length) continue; // dated templates are already placed
+    if (!t || !t.days.length) continue;
     units.push({
-      key: `t:${t.id}`, label: t.name, template: t, onlyDates: [],
+      key: `t:${t.id}`, label: t.name, template: t,
       min: Math.max(0, rule.minPerMonth ?? 0), max: rule.maxPerMonth ?? null,
     });
   }

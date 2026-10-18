@@ -7,7 +7,7 @@ import { PlaceSearch } from '../components/PlaceSearch';
 import { ResultView } from '../components/ResultView';
 import { Field, Modal, Odometer, PageHead, Plate, useToast } from '../components/ui';
 import { defaultFuelPrices, rememberFuelPrices } from '../fuel';
-import { dayLabels, dayText, frequencyText, templateLength } from './Templates';
+import { dayLabels, dayText, startText, templateLength } from './Templates';
 import { isDrivingDay, addDays, lastDayOfMonth, monthLabel, monthRange } from '../../shared/calendar';
 import type {
   Company, DayPlan, Destination, Driver, GenerateRequest, GenerateResult, OdometerCheckpoint, PlanEntry, RequiredStop, Route,
@@ -26,7 +26,8 @@ const prevMonth = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
-interface Prefs { routes: Record<number, Rule>; templates: Record<number, Rule>; tourChance: TourChance; farOn: boolean; farKm: number }
+// tplAuto: per template, may the generator add it by itself (on) or only where it was put on the calendar (off)
+interface Prefs { routes: Record<number, Rule>; tplAuto: Record<number, Rule>; tourChance: TourChance; farOn: boolean; farKm: number }
 function loadPrefs(): Partial<Prefs> {
   try { return JSON.parse(localStorage.getItem(PREFS) ?? '{}'); } catch { return {}; }
 }
@@ -62,7 +63,7 @@ export function WizardPage() {
   const [plan, setPlan] = useState<PlanEntry[]>([]);
   const [fetchedFor, setFetchedFor] = useState('');
   const [rules, setRules] = useState<Record<number, Rule>>(prefs.routes ?? {});
-  const [tplRules, setTplRules] = useState<Record<number, Rule>>(prefs.templates ?? {});
+  const [tplRules, setTplRules] = useState<Record<number, Rule>>(prefs.tplAuto ?? {});
   const [tourChance, setTourChance] = useState<TourChance>(prefs.tourChance ?? 'sometimes');
   const [farOn, setFarOn] = useState(prefs.farOn ?? true);
   const [farKm, setFarKm] = useState(prefs.farKm ?? 200);
@@ -92,13 +93,11 @@ export function WizardPage() {
   useEffect(() => {
     setTplRules((r) => {
       const next = { ...r };
-      for (const t of templates.items) {
-        if (!next[t.id]) next[t.id] = { on: true, min: t.minPerMonth != null ? String(t.minPerMonth) : '', max: t.maxPerMonth != null ? String(t.maxPerMonth) : '' };
-      }
+      for (const t of templates.items) if (!next[t.id]) next[t.id] = { on: false, min: '', max: '' };
       return next;
     });
   }, [templates.items]);
-  useEffect(() => savePrefs({ routes: rules, templates: tplRules, tourChance, farOn, farKm }), [rules, tplRules, tourChance, farOn, farKm]);
+  useEffect(() => savePrefs({ routes: rules, tplAuto: tplRules, tourChance, farOn, farKm }), [rules, tplRules, tourChance, farOn, farKm]);
 
   const months = useMemo(() => (fromMonth && toMonth && fromMonth <= toMonth ? monthRange(fromMonth, toMonth) : []), [fromMonth, toMonth]);
   const period = { from: `${fromMonth}-01`, to: toMonth ? lastDayOfMonth(toMonth) : '' };
@@ -306,7 +305,7 @@ export function WizardPage() {
           )}
 
           {step === 3 && (
-            <RoutesStep routes={routes.items} rules={rules} setRules={setRules} templates={templates.items} tplRules={tplRules} setTplRules={setTplRules}
+            <RoutesStep plan={plan} routes={routes.items} rules={rules} setRules={setRules} templates={templates.items} tplRules={tplRules} setTplRules={setTplRules}
               destById={destById} baseId={baseId!} targetKm={targetKm} months={months.length} workdays={workdays}
               tourChance={tourChance} setTourChance={setTourChance} farOn={farOn} setFarOn={setFarOn} farKm={farKm} setFarKm={setFarKm} />
           )}
@@ -416,7 +415,6 @@ function PlannerStep({
   }, [stops, checkpoints, plan, tplById]);
 
   const conflicts = [...byDate.entries()].filter(([, items]) => items.filter((i) => i.kind !== 'cp' && (i.kind !== 'stop' || i.stop.enabled)).length > 1).map(([d]) => d).sort();
-  const datedTemplates = templates.filter((t) => t.onlyDates.some((d) => d >= period.from && d <= period.to));
 
   const addTemplate = (date: string, templateId: number) =>
     setPlan([...plan, { id: `p${Date.now()}`, date, type: 'template', templateId }]);
@@ -474,14 +472,11 @@ function PlannerStep({
               <Icon name="calendar" size={16} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <b>{t.name}</b>
-                <div className="muted small">{templateLength(t)} nap · {frequencyText(t)}</div>
+                <div className="muted small">{templateLength(t)} nap · {startText(t)}</div>
               </div>
               <span className="muted">⋮⋮</span>
             </div>
           ))}
-          {datedTemplates.length > 0 && (
-            <p className="small muted">{datedTemplates.map((t) => t.name).join(', ')}: a megadott dátumokon magától bekerül.</p>
-          )}
         </div>
         <div className="card card-pad stack" style={{ gap: 8 }}>
           <div className="row"><h3 style={{ flex: 1 }}>Járműnapló</h3><button className="btn btn-sm btn-ghost" onClick={onRefetch}><Icon name="refresh" />Újra</button></div>
@@ -610,10 +605,10 @@ const TOUR_OPTIONS: { v: TourChance; label: string }[] = [
 ];
 
 function RoutesStep({
-  routes, rules, setRules, templates, tplRules, setTplRules, destById, baseId, targetKm, months, workdays,
+  plan, routes, rules, setRules, templates, tplRules, setTplRules, destById, baseId, targetKm, months, workdays,
   tourChance, setTourChance, farOn, setFarOn, farKm, setFarKm,
 }: {
-  routes: Route[]; rules: Record<number, Rule>; setRules: (r: Record<number, Rule>) => void;
+  plan: PlanEntry[]; routes: Route[]; rules: Record<number, Rule>; setRules: (r: Record<number, Rule>) => void;
   templates: TripTemplate[]; tplRules: Record<number, Rule>; setTplRules: (r: Record<number, Rule>) => void;
   destById: Map<number, Destination>; baseId: number; targetKm: number; months: number; workdays: number;
   tourChance: TourChance; setTourChance: (t: TourChance) => void; farOn: boolean; setFarOn: (b: boolean) => void; farKm: number; setFarKm: (n: number) => void;
@@ -665,21 +660,29 @@ function RoutesStep({
         </div>
 
         <div className="card">
-          <div className="route-row" style={{ background: 'var(--paper-2)', borderRadius: '14px 14px 0 0', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)', fontWeight: 600 }}>
-            <span /><span>Utazás-sablon</span><span style={{ textAlign: 'right' }}>Hossz</span><span>Havonta min – max</span>
+          <div className="route-row tpl-rule" style={{ background: 'var(--paper-2)', borderRadius: '14px 14px 0 0', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)', fontWeight: 600 }}>
+            <span /><span>Utazás-sablon · mikor szerepeljen?</span><span style={{ textAlign: 'right' }}>Hossz</span>
           </div>
           {templates.length === 0 && <p className="muted" style={{ padding: 20 }}>Nincs utazás-sablon. <Link to="/sablonok">Vegyél fel egyet</Link>, ha van szokásos, többnapos vagy több helyet érintő utad.</p>}
           {templates.map((t) => {
             const rule = tplRules[t.id] ?? { on: false, min: '', max: '' };
+            const placed = plan.filter((e) => e.type === 'template' && e.templateId === t.id).length;
             return (
-              <div key={t.id} className={`route-row ${rule.on ? '' : 'off'}`}>
-                <input type="checkbox" className="check" checked={rule.on} onChange={(e) => setT(t.id, { on: e.target.checked })} aria-label={t.name} />
+              <div key={t.id} className="route-row tpl-rule">
+                <Icon name="calendar" size={18} />
                 <div style={{ minWidth: 0 }}>
                   <b>{t.name}</b>
                   <div className="muted small">{t.days.map((d) => dayText(d, destById)).join(' · ')}</div>
+                  <div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
+                    <div className="tabs tabs-sm">
+                      <button type="button" className={!rule.on ? 'on' : ''} onClick={() => setT(t.id, { on: false })}>Csak ahova a naptárba tettem</button>
+                      <button type="button" className={rule.on ? 'on' : ''} onClick={() => setT(t.id, { on: true })}>A generátor is beteheti</button>
+                    </div>
+                    {rule.on && <><span className="muted small">havonta</span>{limits(rule, (p) => setT(t.id, p))}</>}
+                    <span className={`chip ${placed ? 'info' : ''}`}>naptárban: {placed}×</span>
+                  </div>
                 </div>
                 <span className="kpi-km" style={{ textAlign: 'right' }}>{templateLength(t)} nap</span>
-                {t.onlyDates.length ? <span className="chip sign">csak {t.onlyDates.length} megadott napon</span> : limits(rule, (p) => setT(t.id, p))}
               </div>
             );
           })}
