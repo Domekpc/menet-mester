@@ -6,6 +6,7 @@ import {
 import { generate } from './generator.js';
 import { buildWorkbook } from './export.js';
 import { monthLabel, lastDayOfMonth } from '../shared/calendar.js';
+import { formatPlate } from '../shared/plate.js';
 import type { GenerateRequest, RequiredStop } from '../shared/types.js';
 
 import { authRequired, isAuthenticated, login, logout, requireAuth } from './auth.js';
@@ -137,10 +138,10 @@ app.post('/api/export', h(async (q, r) => {
   if (!company || !vehicle || !driver) return r.status(400).json({ error: 'Hiányzó cég, jármű vagy sofőr' });
   const buf = await buildWorkbook({ company, vehicle, driver, result, fuelPrices });
   const months = result.months;
-  const name = `Utnyilvantartas_${vehicle.plate}_${months[0].month}${months.length > 1 ? '_' + months[months.length - 1].month : ''}.xlsx`;
+  const name = `Utnyilvantartas_${formatPlate(vehicle.plate)}_${months[0].month}${months.length > 1 ? '_' + months[months.length - 1].month : ''}.xlsx`;
   r.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   r.setHeader('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`);
-  r.setHeader('X-Title', encodeURIComponent(`${vehicle.plate} – ${monthLabel(months[0].month)}`));
+  r.setHeader('X-Title', encodeURIComponent(`${formatPlate(vehicle.plate)} – ${monthLabel(months[0].month)}`));
   r.send(Buffer.from(buf as ArrayBuffer));
 }));
 

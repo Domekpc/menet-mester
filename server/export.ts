@@ -1,11 +1,12 @@
 import ExcelJS from 'exceljs';
 import { monthLabel } from '../shared/calendar.js';
+import { decimalHu, formatPlate } from '../shared/plate.js';
 import type { Company, Driver, GenerateResult, Vehicle } from '../shared/types.js';
 
 const thin = { style: 'thin' as const, color: { argb: 'FF9CA3AF' } };
 const box = { top: thin, left: thin, bottom: thin, right: thin };
 
-export const formatNorm = (v: Vehicle) => `${String(v.consumption).replace('.', ',')} L/100km`;
+export const formatNorm = (v: Vehicle) => `${decimalHu(v.consumption)} L/100km`;
 
 /** One worksheet per month, laid out like the classic paper-style útnyilvántartás. */
 export async function buildWorkbook(opts: {
@@ -38,7 +39,7 @@ export async function buildWorkbook(opts: {
     set('A4', 'Cím :'); set('C4', company.address);
     set('A5', 'Adószám :'); set('C5', company.taxNumber);
 
-    set('A7', 'Rendszám:'); set('C7', vehicle.plate, 'D7');
+    set('A7', 'Rendszám:'); set('C7', formatPlate(vehicle.plate), 'D7');
     set('E7', 'Jármű kat :'); set('H7', vehicle.category, 'I7');
     set('A8', 'Típus :'); set('C8', vehicle.model, 'D8');
     set('E8', 'Üzemanyag :'); set('H8', vehicle.fuel, 'I8');

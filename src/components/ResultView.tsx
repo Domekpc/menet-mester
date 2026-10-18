@@ -4,6 +4,7 @@ import { monthLabel, MONTH_NAMES } from '../../shared/calendar';
 import type { DayKind, DayPlan, Destination, GenerateResult, Vehicle } from '../../shared/types';
 import { Icon } from './Icon';
 import { MonthGrid } from './MonthGrid';
+import { decimalHu } from '../../shared/plate';
 
 export const KIND_LABEL: Record<DayKind, string> = {
   free: 'generált', template: 'utazás-sablon', required: 'járműnapló', plan: 'megadott nap',
@@ -57,7 +58,7 @@ export function ResultView({ result, vehicle, destById, fuelPrices, onFuelPrice,
         <div className="card stat">
           <div className="k">Üzemanyagköltség</div>
           <div className="v">{fmtInt(totalCost)}<small>Ft</small></div>
-          <div className="small muted">{vehicle ? `${String(vehicle.consumption).replace('.', ',')} L/100km norma alapján` : ''}</div>
+          <div className="small muted">{vehicle ? `${decimalHu(vehicle.consumption)} L/100km norma alapján` : ''}</div>
         </div>
       </div>
 

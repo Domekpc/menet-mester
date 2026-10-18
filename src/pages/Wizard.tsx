@@ -6,6 +6,7 @@ import { RuleEditor, normalizeRule, ruleSummary, toUnitRule, type RuleState } fr
 import { ResultView } from '../components/ResultView';
 import { Field, Odometer, PageHead, Plate, useToast } from '../components/ui';
 import { defaultFuelPrices, rememberFuelPrices } from '../fuel';
+import { decimalHu, formatPlate } from '../../shared/plate';
 import { dayText, templateLength } from './Templates';
 import { isDrivingDay, addDays, lastDayOfMonth, monthLabel, monthRange } from '../../shared/calendar';
 import type {
@@ -240,7 +241,7 @@ export function WizardPage() {
               <PickSection n="A" title="Cég" items={companies.items} selected={companyId} onSelect={setCompanyId}
                 render={(c) => <><b>{c.name}</b><small>{c.address}</small><small>Adószám: {c.taxNumber}</small></>} />
               <PickSection n="B" title="Jármű" items={vehicles.items} selected={vehicleId} onSelect={setVehicleId}
-                render={(v) => <><Plate value={v.plate} /><b style={{ marginTop: 6 }}>{v.model}</b><small>{v.category} · {v.fuel} · {String(v.consumption).replace('.', ',')} L/100km</small></>} />
+                render={(v) => <><Plate value={v.plate} /><b style={{ marginTop: 6 }}>{v.model}</b><small>{v.category} · {v.fuel} · {decimalHu(v.consumption)} L/100km</small></>} />
               <PickSection n="C" title="Sofőr" items={drivers.items} selected={driverId} onSelect={setDriverId}
                 render={(d) => <><b>{d.name}</b><small>{d.address}</small><small>Adóazonosító: {d.taxNumber}</small></>} />
             </div>
@@ -317,7 +318,7 @@ export function WizardPage() {
                 <Icon name="refresh" />Új változat{lockedUnits.size ? ` (${result.days.filter((d) => lockedUnits.has(d.unitId)).length} nap rögzítve)` : ''}
               </button>
               <button className="btn" onClick={async () => {
-                const title = `${vehicle?.plate ?? ''} · ${monthLabel(fromMonth)}${fromMonth !== toMonth ? ' – ' + monthLabel(toMonth) : ''}`;
+                const title = `${vehicle ? formatPlate(vehicle.plate) : ''} · ${monthLabel(fromMonth)}${fromMonth !== toMonth ? ' – ' + monthLabel(toMonth) : ''}`;
                 const { id } = await api<{ id: number }>('/api/reports', { method: 'POST', json: { title, request: lastReq, result, fuelPrices: fuel } });
                 rememberFuelPrices(fuel);
                 toast('Nyilvántartás elmentve');

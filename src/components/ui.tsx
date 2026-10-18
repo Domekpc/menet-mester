@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Icon } from './Icon';
+import { formatPlate } from '../../shared/plate';
 
 // ---------- toast ----------
 interface Toast { id: number; text: string; error?: boolean }
@@ -102,7 +103,7 @@ export function Empty({ icon, title, text, action }: { icon: string; title: stri
 }
 
 export function Plate({ value }: { value: string }) {
-  return <span className="plate"><span>{value}</span></span>;
+  return <span className="plate"><span>{formatPlate(value)}</span></span>;
 }
 
 export function PageHead({ eyebrow, title, text, actions }: { eyebrow: string; title: string; text?: string; actions?: ReactNode }) {

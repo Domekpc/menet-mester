@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useCollection } from '../api';
 import { Icon } from '../components/Icon';
 import { Empty, Field, Modal, PageHead, Plate, useConfirm, useToast } from '../components/ui';
+import { decimalHu, formatPlate } from '../../shared/plate';
 import type { Company, Destination, Driver, Vehicle } from '../../shared/types';
 
 type Kind = 'companies' | 'vehicles' | 'drivers';
@@ -57,7 +58,7 @@ export function MasterDataPage() {
   const form = FORMS[tab];
 
   const remove = async (item: AnyEntity) => {
-    const name = 'name' in item ? item.name : (item as Vehicle).plate;
+    const name = 'name' in item ? item.name : formatPlate((item as Vehicle).plate);
     if (!(await confirm(`${form.one[0].toUpperCase() + form.one.slice(1)} törlése`, `Biztosan törlöd: ${name}? A korábban mentett nyilvántartások nem változnak.`))) return;
     await col.remove(item.id);
     toast(`${name} törölve`);
@@ -96,7 +97,7 @@ export function MasterDataPage() {
               </div>
               <dl style={{ margin: '14px 0 0', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 14px', fontSize: 14 }}>
                 {form.fields.filter((f) => !(tab === 'vehicles' && f.key === 'plate') && !(tab !== 'vehicles' && f.key === 'name')).map((f) => (
-                  <Detail key={f.key} label={f.label} value={`${(item as unknown as Record<string, string | number>)[f.key]}${f.suffix ? ' ' + f.suffix : ''}`} />
+                  <Detail key={f.key} label={f.label} value={`${f.type === 'number' ? decimalHu((item as unknown as Record<string, number>)[f.key]) : (item as unknown as Record<string, string>)[f.key]}${f.suffix ? ' ' + f.suffix : ''}`} />
                 ))}
                 {tab === 'companies' && (
                   <Detail label="Telephely" value={destinations.items.find((d) => d.id === (item as Company).homeDestinationId)?.name ?? '—'} />
@@ -144,7 +145,10 @@ function EntityForm({ kind, item, destinations, onClose, onSave }: {
     setTried(true);
     if (missing.length) return;
     const out = { ...data };
-    if (kind === 'vehicles') out.consumption = Number(String(out.consumption).replace(',', '.'));
+    if (kind === 'vehicles') {
+      out.consumption = Number(String(out.consumption).replace(',', '.'));
+      out.plate = formatPlate(String(out.plate));
+    }
     delete out.id;
     await onSave(out);
   };

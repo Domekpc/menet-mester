@@ -188,7 +188,7 @@ tr:hover .actions, .item:hover .actions, .actions:focus-within { opacity: 1; }
 .chip.info { background: var(--info-soft); color: var(--info); }
 
 .plate {
-  display: inline-flex; align-items: stretch; border: 2px solid var(--ink); border-radius: 6px;
+  display: inline-flex; align-self: flex-start; width: max-content; align-items: stretch; border: 2px solid var(--ink); border-radius: 6px;
   font-family: var(--mono); font-weight: 700; letter-spacing: 0.06em; background: #fff; overflow: hidden; font-size: 14px;
 }
 .plate::before { content: 'H'; background: #2147b5; color: #fff; font-size: 10px; padding: 0 4px; display: flex; align-items: flex-end; padding-bottom: 2px; }
