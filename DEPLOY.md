@@ -17,8 +17,12 @@ Helyben minden marad a régiben: `npm run dev` a `data/menet-mester.db` SQLite-f
 
 1. A projektben: **Storage → Create Database**, majd a Marketplace-ből a **Neon** (Serverless Postgres).
 2. Csomag: **Free**. Régió: **Frankfurt (eu-central-1)** — a szerver is Frankfurtban fut, így gyors.
-3. **Connect** a projekthez, minden környezetre (Production, Preview, Development).
-   A Vercel magától beállítja a `DATABASE_URL` változót.
+3. **Connect Project** ablak:
+   - Environments: **Production, Preview** (elég),
+   - Create Database Branch: **egyik se** legyen bejelölve,
+   - Custom Environment Variable Prefix: **`DATABASE`** — így lesz a változó neve `DATABASE_URL`,
+     amit az alkalmazás keres,
+   - Sensitive: maradhat bekapcsolva.
 
 Az első induláskor az alkalmazás létrehozza a táblákat, és betölti az alapadatokat (Ernivill Kft.,
 Mercedes GLC, Eckhardt Tímea, a mintautak).
@@ -41,8 +45,8 @@ Ezután **Deployments → a legutóbbi → ⋯ → Redeploy**, hogy az új beál
 A gépeden lévő adatokat (úticélok, utak, sablonok, járműnapló, mentett nyilvántartások) így
 másolod fel:
 
-1. A Vercelen a **Storage** fülön nyisd meg a Neon adatbázist, és a kapcsolódási adatok közül másold ki a
-   `DATABASE_URL` értékét (a **Settings → Environment Variables** között is megtalálod).
+1. A Vercelen a **Storage** fülön nyisd meg a Neon adatbázist → **Open in Neon** → **Connect**, és másold ki
+   a kapcsolódási címet (`postgresql://…`). (Ha a változó „Sensitive”, a Vercelben nem olvasható vissza.)
 2. A projekt mappájában, a saját terminálodban:
 
 ```bash
