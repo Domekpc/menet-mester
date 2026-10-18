@@ -5,7 +5,6 @@ import { PlaceSearch } from '../components/PlaceSearch';
 import { Empty, Field, Modal, PageHead, useConfirm, useToast } from '../components/ui';
 import { BASE, type Destination, type TripTemplate, type TripTemplateDay } from '../../shared/types';
 
-export const WEEKDAYS = ['H', 'K', 'Sze', 'Cs', 'P', 'Szo', 'V'];
 export const BASE_PLACE: Destination = { id: BASE, name: 'Telephely', address: 'a generáláskor kiválasztott telephely', lat: null, lon: null, maxPerDay: null, minGapDays: null };
 
 /** "1. nap", "2–4. nap" labels for template rows. */
@@ -29,9 +28,6 @@ export function dayText(d: TripTemplateDay, byId: Map<number, Destination>) {
   return d.stops.length ? d.stops.map((id) => placeName(id, byId)).join(' → ') : 'az autó áll';
 }
 
-export function startText(t: TripTemplate) {
-  return t.startWeekdays.length ? `indul: ${t.startWeekdays.map((w) => WEEKDAYS[w - 1]).join(', ')}` : 'bármelyik munkanapon indulhat';
-}
 
 export function TemplatesPage() {
   const list = useCollection<TripTemplate>('templates');
@@ -44,7 +40,7 @@ export function TemplatesPage() {
   return (
     <>
       <PageHead eyebrow="Útkészlet" title="Utazás-sablonok"
-        text="Így szokott kinézni egy utazás, napokra bontva — például hétfőn kimész Deutschlandsbergbe, közben minden nap Aicheggbe és vissza, pénteken haza. A generátor egészében teszi be, vagy te húzod a naptárba."
+        text="Így szokott kinézni egy utazás, napokra bontva — például kimész Deutschlandsbergbe, közben minden nap Aicheggbe és vissza, az utolsó napon haza. Hogy mikor és hányszor szerepeljen, azt generáláskor adod meg."
         actions={<button className="btn btn-primary" onClick={() => setEditing({})}><Icon name="plus" />Új sablon</button>} />
 
       {list.items.length === 0 && !list.loading ? (
@@ -60,7 +56,7 @@ export function TemplatesPage() {
                 <div className="dot"><Icon name="calendar" /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h3>{t.name}</h3>
-                  <div className="muted small">{templateLength(t)} nap · {startText(t)}</div>
+                  <div className="muted small">{templateLength(t)} nap</div>
                 </div>
                 <div className="actions">
                   <button className="btn btn-ghost icon-btn" aria-label="Szerkesztés" onClick={() => setEditing(t)}><Icon name="edit" /></button>
@@ -99,7 +95,6 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
   onClose: () => void; onSave: (t: Omit<TripTemplate, 'id'>) => Promise<void>;
 }) {
   const [name, setName] = useState(initial.name ?? '');
-  const [weekdays, setWeekdays] = useState<number[]>(initial.startWeekdays ?? []);
   const [days, setDays] = useState<TripTemplateDay[]>(initial.days?.length ? initial.days : [{ stops: [BASE], repeat: 1 }]);
   const [note, setNote] = useState(initial.note ?? '');
   const [adding, setAdding] = useState<number | null>(null);
@@ -131,28 +126,17 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
     if (!name.trim()) return setErr('Adj nevet a sablonnak.');
     if (!days.some((d) => d.stops.length > 1)) return setErr('Legalább egy napon legyen út (két hely).');
     await onSave({
-      name: name.trim(), startWeekdays: [...weekdays].sort(), days: days.map((d) => ({ stops: d.stops, repeat: Math.max(1, d.repeat || 1) })),
+      name: name.trim(), startWeekdays: [], days: days.map((d) => ({ stops: d.stops, repeat: Math.max(1, d.repeat || 1) })),
       // how often it happens is decided per generation, not stored with the template
       minPerMonth: null, maxPerMonth: null, onlyDates: [], note: note.trim(),
     });
   };
 
   return (
-    <Modal wide title={initial.id ? 'Sablon szerkesztése' : 'Új utazás-sablon'} subtitle="Napról napra: hova megy az autó. Ha több egymást követő nap ugyanolyan, elég egyszer felvenni és megadni, hány napig ismétlődik."
+    <Modal wide title={initial.id ? 'Sablon szerkesztése' : 'Új utazás-sablon'} subtitle="Napról napra: hova megy az autó, a telephelyről indulva. Ha több egymást követő nap ugyanolyan, elég egyszer felvenni és megadni, hány napig ismétlődik."
       onClose={onClose}
       footer={<>{err && <span className="error-text" style={{ marginRight: 'auto' }}>{err}</span>}<button className="btn btn-ghost" onClick={onClose}>Mégse</button><button className="btn btn-primary" onClick={submit}><Icon name="save" />Mentés</button></>}>
-      <div className="grid" style={{ gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
-        <Field label="Név"><input className="input" autoFocus={!initial.id} value={name} onChange={(e) => setName(e.target.value)} placeholder="pl. Deutschlandsbergi hét" /></Field>
-        <Field label="Indulhat ezeken a napokon">
-          <div className="weekdays">
-            {WEEKDAYS.map((w, i) => (
-              <button key={w} type="button" className={weekdays.includes(i + 1) ? 'on' : ''}
-                onClick={() => setWeekdays(weekdays.includes(i + 1) ? weekdays.filter((x) => x !== i + 1) : [...weekdays, i + 1])}>{w}</button>
-            ))}
-          </div>
-        </Field>
-      </div>
-      <small className="muted" style={{ marginTop: -8 }}>{weekdays.length ? '' : 'Ha egy napot sem jelölsz, bármelyik munkanapon indulhat.'}</small>
+      <Field label="Név"><input className="input" autoFocus={!initial.id} value={name} onChange={(e) => setName(e.target.value)} placeholder="pl. Deutschlandsbergi hét" /></Field>
 
       <div className="stack" style={{ gap: 10 }}>
         {days.map((d, i) => (
@@ -208,7 +192,7 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
       </div>
 
       <div className="stack" style={{ gap: 10 }}>
-        <p className="small muted">Hogy havonta hányszor szerepeljen, vagy csak a naptárba húzott napokon, azt generáláskor adod meg.</p>
+        <p className="small muted">Hogy mikor és milyen gyakran szerepeljen (hányszor, mely napokon, csak megadott dátumokon), azt generáláskor, az „Utak és utazások” lépésben adod meg.</p>
         <Field label="Megjegyzés"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="pl. havi kiszállítás az osztrák partnerhez" /></Field>
       </div>
     </Modal>

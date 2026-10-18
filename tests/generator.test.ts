@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generate, type GeneratorContext } from '../server/generator';
-import { BASE, type Destination, type GenerateRequest, type Route, type TripTemplate } from '../shared/types';
+import { BASE, type Destination, type GenerateRequest, type Route, type TripTemplate, type UnitRule } from '../shared/types';
 
 const d = (id: number, name: string, extra: Partial<Destination> = {}): Destination =>
   ({ id, name, address: `${name} címe`, lat: 0, lon: 0, maxPerDay: null, minGapDays: null, ...extra });
@@ -39,12 +39,15 @@ const ctx: GeneratorContext = {
   legKm: (a, b) => km[`${Math.min(a, b)}-${Math.max(a, b)}`],
 };
 
-const rule = (routeId: number, min: number | null = null, max: number | null = null) => ({ routeId, minPerMonth: min, maxPerMonth: max });
+type RuleOpts = Partial<Omit<UnitRule, 'kind' | 'id'>>;
+const rule = (id: number, o: RuleOpts = {}): UnitRule =>
+  ({ kind: 'route', id, period: 'month', min: null, max: null, minGapDays: null, weekdays: [], onlyDates: [], ...o });
+const tpl = (id: number, o: RuleOpts = {}): UnitRule => ({ ...rule(id, o), kind: 'template' });
 const base: GenerateRequest = {
   companyId: 1, vehicleId: 1, driverId: 1, baseDestinationId: 1,
   startOdometer: 10000, endOdometer: 10600, fromMonth: '2024-04', toMonth: '2024-06',
-  stops: [], checkpoints: [], routes: [rule(10), rule(11), rule(12)],
-  templates: [], plan: [], locked: [], tourChance: 'sometimes', farKm: null, seed: 42,
+  stops: [], checkpoints: [], rules: [rule(10), rule(11), rule(12)],
+  locked: [], tourChance: 'sometimes', seed: 42,
 };
 
 const legs = (r: ReturnType<typeof generate>) => r.months.flatMap((m) => m.legs);
@@ -65,7 +68,7 @@ describe('generate', () => {
 
   it('starts every day where the previous one ended and ends the period at base', () => {
     for (const seed of [5, 6, 7]) {
-      const r = generate({ ...base, seed, endOdometer: 13500, routes: [...base.routes, rule(13)], farKm: 200 }, ctx);
+      const r = generate({ ...base, seed, endOdometer: 13500, rules: [...base.rules, tpl(30, { max: 1 })] }, ctx);
       let where = 1;
       for (const day of r.days) {
         if (!day.stops.length) continue;
@@ -85,10 +88,33 @@ describe('generate', () => {
     }
   });
 
-  it('keeps the minimum gap between two visits', () => {
-    const r = generate({ ...base, routes: [rule(14, 3)], endOdometer: 10040 }, ctx);
+  it('allows more visits a day when the daily rule says so', () => {
+    const r = generate({ ...base, rules: [rule(11, { period: 'day', min: 2, max: 2 })], endOdometer: 10000 + 4 * 6.4 * 60 }, ctx);
+    expect(r.days.some((d) => d.stops.filter((x) => x === 3).length === 2)).toBe(true);
+  });
+
+  it('keeps the minimum gap between two occurrences', () => {
+    const r = generate({ ...base, rules: [rule(14, { min: 3, minGapDays: 5 })], endOdometer: 10040 }, ctx);
     const dates = r.days.filter((x) => x.stops.includes(8)).map((x) => new Date(x.date).getTime() / 864e5);
     for (let i = 1; i < dates.length; i++) expect(dates[i] - dates[i - 1]).toBeGreaterThan(5);
+  });
+
+  it('respects weekly min and max', () => {
+    const r = generate({ ...base, rules: [rule(10, { period: 'week', max: 1 }), rule(11, { period: 'week', min: 1 }), rule(12)] }, ctx);
+    const weeks = new Map<string, number>();
+    for (const d of r.days) {
+      if (!d.stops.includes(2)) continue;
+      const day = new Date(d.date + 'T00:00:00Z');
+      const monday = new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * 864e5).toISOString().slice(0, 10);
+      weeks.set(monday, (weeks.get(monday) ?? 0) + 1);
+    }
+    for (const n of weeks.values()) expect(n).toBeLessThanOrEqual(1);
+    expect(r.days.filter((d) => d.stops.includes(3)).length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('only uses the allowed weekdays', () => {
+    const r = generate({ ...base, rules: [rule(10, { weekdays: [2, 4] }), rule(11, { weekdays: [2, 4] })], endOdometer: 10300 }, ctx);
+    for (const d of r.days) expect([2, 4]).toContain(((new Date(d.date + 'T00:00:00Z').getUTCDay() + 6) % 7) + 1);
   });
 
   it('chains nearby places into one tour when tours are frequent', () => {
@@ -99,35 +125,23 @@ describe('generate', () => {
   it('never chains when tours are switched off', () => {
     const r = generate({ ...base, tourChance: 'never' }, ctx);
     for (const day of r.days.filter((x) => x.kind === 'free')) {
-      // every loop is base → one place → base
       const seq = day.stops;
       for (let i = 1; i < seq.length - 1; i += 2) expect(seq[i + 1]).toBe(1);
     }
   });
 
-  it('stays overnight on far trips when allowed', () => {
-    const r = generate({ ...base, routes: [rule(13, 1, 1)], endOdometer: 10000 + 3 * 700, farKm: 200, seed: 11 }, ctx);
-    expect(r.days.some((x) => x.kind === 'trip' && x.stops[0] === 6)).toBe(true);
-  });
-
-  it('places a template from the calendar exactly as described', () => {
-    const r = generate({ ...base, endOdometer: 12000, plan: [{ id: 'a', date: '2024-05-06', type: 'template', templateId: 30 }], templates: [] }, ctx);
+  it('puts a template exactly on its only-dates', () => {
+    const r = generate({ ...base, endOdometer: 12000, rules: [...base.rules, tpl(30, { onlyDates: ['2024-05-06'] })] }, ctx);
     const span = r.days.filter((x) => x.date >= '2024-05-06' && x.date <= '2024-05-10');
     expect(span.map((x) => x.stops)).toEqual([[1, 6], [6, 7, 6], [6, 7, 6], [6, 7, 6], [6, 1]]);
+    expect(r.days.filter((x) => x.ruleKey === 't:30').map((x) => x.date)).toEqual(['2024-05-06']);
     expect(Math.abs(r.totalKm - 2000)).toBeLessThan(1);
   });
 
-  it('uses a template only where it was put on the calendar unless the generator may add it', () => {
-    const plan = [
-      { id: 'a', date: '2024-05-03', type: 'template' as const, templateId: 31 },
-      { id: 'b', date: '2024-06-14', type: 'template' as const, templateId: 31 },
-    ];
-    const r = generate({ ...base, endOdometer: 10700, plan, templates: [] }, ctx);
-    expect(r.days.filter((x) => x.label === 'Metro').map((x) => x.date)).toEqual(['2024-05-03', '2024-06-14']);
-    const auto = generate({ ...base, endOdometer: 10700, plan, templates: [{ templateId: 31, minPerMonth: 2, maxPerMonth: null }] }, ctx);
-    for (const m of ['2024-04', '2024-05', '2024-06']) {
-      expect(auto.days.filter((x) => x.label === 'Metro' && x.date.startsWith(m)).length).toBeGreaterThanOrEqual(2);
-    }
+  it('puts a route only on its only-dates', () => {
+    const r = generate({ ...base, endOdometer: 10300, rules: [rule(11), rule(12), rule(10, { onlyDates: ['2024-05-03', '2024-06-14'] })] }, ctx);
+    const pappas = r.days.filter((x) => x.stops.includes(2)).map((x) => x.date);
+    expect(pappas).toEqual(['2024-05-03', '2024-06-14']);
   });
 
   it('places required stops and honours their odometer reading', () => {
@@ -137,7 +151,7 @@ describe('generate', () => {
   });
 
   it('respects monthly min and max', () => {
-    const r = generate({ ...base, routes: [rule(10, null, 3), rule(11, 2), rule(12)] }, ctx);
+    const r = generate({ ...base, rules: [rule(10, { max: 3 }), rule(11, { min: 2 }), rule(12)] }, ctx);
     for (const m of r.months) {
       expect(m.legs.filter((l) => l.toId === 2).length).toBeLessThanOrEqual(3);
       expect(m.legs.filter((l) => l.toId === 3).length).toBeGreaterThanOrEqual(2);

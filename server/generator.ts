@@ -7,10 +7,12 @@ import {
   type GenerateResult,
   type MonthResult,
   type Route,
+  type RulePeriod,
   type TripLeg,
   type TripTemplate,
+  type UnitRule,
 } from '../shared/types.js';
-import { addDays, isDrivingDay, isSaturday, monthOf, monthRange, lastDayOfMonth, weekday } from '../shared/calendar.js';
+import { addDays, isDrivingDay, monthOf, monthRange, lastDayOfMonth, weekday } from '../shared/calendar.js';
 
 export interface GeneratorContext {
   destinations: Map<number, Destination>;
@@ -23,7 +25,6 @@ export interface GeneratorContext {
 const MAX_JOURNEYS_PER_DAY = 3; // separate base → … → base loops on one day
 const UNIT = 10; // work in 0.1 km units to avoid float drift
 const LONG_DAY_KM = 650;
-const NEAR_KM = 45; // local trips during a stay away
 const TOUR_P = { never: 0, rare: 0.15, sometimes: 0.35, often: 0.65 } as const;
 
 /** Small deterministic PRNG so a seed reproduces the same record. */
@@ -50,15 +51,24 @@ function permutations<T>(list: T[]): T[][] {
   return list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map((p) => [x, ...p]));
 }
 
+/** 1 = Monday … 7 = Sunday */
+const isoWeekday = (date: string) => ((weekday(date) + 6) % 7) + 1;
+
+/** Bucket a date falls into for a count rule: the day, the Monday of its week, or its month. */
+export function bucketOf(date: string, period: RulePeriod) {
+  if (period === 'day') return date;
+  if (period === 'week') return addDays(date, 1 - isoWeekday(date));
+  return monthOf(date);
+}
+
 interface Day {
   date: string;
   index: number;
   month: string;
   driving: boolean; // regular working day
-  spare: boolean; // Saturday, used only when the working days are full
+  holiday: boolean; // public holiday on a weekday
   seq: number[]; // stops visited this day (empty = no driving)
   kind: DayKind | null; // null = nothing planned yet
-  fixed: boolean; // given by the user / data or part of a multi-day unit: never modified by filling
   label: string;
   unitId: string;
   ruleKey?: string;
@@ -69,8 +79,7 @@ interface Day {
 interface Unit {
   key: string; // r:<id> / t:<id>
   label: string;
-  min: number;
-  max: number | null;
+  rule: UnitRule;
   route?: Route;
   template?: TripTemplate;
 }
@@ -101,9 +110,10 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   // ---------- calendar ----------
   const days: Day[] = [];
   for (let d = firstDate, i = 0; d <= lastDate; d = addDays(d, 1), i++) {
+    const driving = isDrivingDay(d);
     days.push({
-      date: d, index: i, month: monthOf(d), driving: isDrivingDay(d), spare: isSaturday(d),
-      seq: [], kind: null, fixed: false, label: '', unitId: '', segment: 0,
+      date: d, index: i, month: monthOf(d), driving, holiday: !driving && isoWeekday(d) <= 5,
+      seq: [], kind: null, label: '', unitId: '', segment: 0,
     });
   }
   const dayByDate = new Map(days.map((d) => [d.date, d]));
@@ -112,7 +122,7 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
   const newUnit = () => `${seed.toString(36)}-${++unitSeq}`;
 
   const occupy = (day: Day, seq: number[], kind: DayKind, label: string, unitId: string, ruleKey?: string) => {
-    Object.assign(day, { seq: dedupe(seq), kind, label, unitId, ruleKey, fixed: true });
+    Object.assign(day, { seq: dedupe(seq), kind, label, unitId, ruleKey });
   };
 
   /** Day sequences of a template, BASE replaced by the real base. */
@@ -124,6 +134,22 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     for (let i = start; i < start + len; i++) if (days[i].kind) return false;
     return true;
   };
+
+  // ---------- units the generator may use ----------
+  const units: Unit[] = [];
+  for (const rule of req.rules ?? []) {
+    if (rule.kind === 'route') {
+      const r = ctx.routes.get(rule.id);
+      if (r && journeyStops(base, [r.fromId, r.toId]).length >= 3) units.push({ key: `r:${r.id}`, label: r.name, rule, route: r });
+    } else {
+      const t = ctx.templates.get(rule.id);
+      if (t?.days.length) units.push({ key: `t:${t.id}`, label: t.name, rule, template: t });
+    }
+  }
+  const visitsIn = (seq: number[]) => seq.filter((id) => id !== base);
+  const routeVisits = (r: Route) => visitsIn(journeyStops(base, [r.fromId, r.toId]).slice(1, -1));
+  const unitSeqs = (u: Unit) => (u.template ? expandTemplate(u.template) : [journeyStops(base, routeVisits(u.route!))]);
+  const unitUnits = (u: Unit) => unitSeqs(u).reduce((s, q) => s + seqUnits(q), 0);
 
   // ---------- fixed days ----------
   interface Checkpoint { key: number; odometer: number; label: string }
@@ -154,35 +180,20 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     }
   }
 
-  // 3. what the user put on the planner calendar
-  const placeTemplateAt = (t: TripTemplate, date: string, kind: DayKind, why: string) => {
-    const start = dayByDate.get(date);
-    const seqs = expandTemplate(t);
-    if (!start) return false;
-    if (!spanFree(start.index, seqs.length)) {
-      warnings.push(`${date}: a(z) „${t.name}” utazás nem fér be, mert ütközik egy másik bejegyzéssel (${why}).`);
-      return false;
-    }
-    const unit = newUnit();
-    seqs.forEach((seq, i) => occupy(days[start.index + i], seq, kind, t.name, unit, i === 0 ? `t:${t.id}` : undefined));
-    return true;
-  };
-
-  for (const e of req.plan ?? []) {
-    if (e.date < firstDate || e.date > lastDate) continue;
-    if (e.type === 'template') {
-      const t = ctx.templates.get(e.templateId);
-      if (t) placeTemplateAt(t, e.date, 'plan', 'naptár');
-      continue;
-    }
-    const day = dayByDate.get(e.date)!;
-    if (day.kind) {
-      warnings.push(`${e.date}: a megadott látogatás ütközik egy másik bejegyzéssel, ezért kimaradt.`);
-      continue;
-    }
-    occupy(day, journeyStops(base, e.destinationIds), 'plan', 'Megadott nap', newUnit());
-    if (e.odometer != null && day.seq.length > 2) {
-      checkpoints.push({ key: day.index * 1000 + day.seq.length - 2, odometer: e.odometer, label: `Km-állás ${e.date}` });
+  // 3. routes and templates bound to given dates ("csak ezeken a napokon")
+  for (const u of units) {
+    for (const date of [...new Set(u.rule.onlyDates)].sort()) {
+      if (date < firstDate || date > lastDate) continue;
+      const start = dayByDate.get(date)!;
+      if (start.locked && start.ruleKey === u.key) continue;
+      const seqs = unitSeqs(u);
+      if (!spanFree(start.index, seqs.length)) {
+        warnings.push(`${date}: „${u.label}” nem fér be, mert ütközik egy másik bejegyzéssel.`);
+        continue;
+      }
+      const unit = newUnit();
+      seqs.forEach((seq, i) =>
+        occupy(days[start.index + i], seq, u.template ? 'template' : 'plan', u.template ? u.label : 'Megadott nap', unit, i === 0 ? u.key : undefined));
     }
   }
 
@@ -217,56 +228,46 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     day.segment = segments.findIndex((s) => key > s.from && key <= s.to);
   }
 
-  // ---------- units the generator may use ----------
-  const units: Unit[] = [];
-  for (const rule of req.routes) {
-    const r = ctx.routes.get(rule.routeId);
-    if (!r || journeyStops(base, [r.fromId, r.toId]).length < 3) continue;
-    units.push({
-      key: `r:${r.id}`, label: r.name, route: r,
-      min: Math.max(0, rule.minPerMonth ?? 0), max: rule.maxPerMonth ?? null,
-    });
-  }
-  for (const rule of req.templates ?? []) {
-    const t = ctx.templates.get(rule.templateId);
-    if (!t || !t.days.length) continue;
-    units.push({
-      key: `t:${t.id}`, label: t.name, template: t,
-      min: Math.max(0, rule.minPerMonth ?? 0), max: rule.maxPerMonth ?? null,
-    });
-  }
+  // ---------- rule bookkeeping ----------
+  const free = units.filter((u) => !u.rule.onlyDates.length); // units the generator places itself
   if (!units.length && !days.some((d) => d.kind)) warnings.push('Nincs kiválasztott út vagy utazás.');
 
-  const counts = new Map<string, number>(); // `${unitKey}|${month}`
-  for (const d of days) if (d.ruleKey) counts.set(`${d.ruleKey}|${d.month}`, (counts.get(`${d.ruleKey}|${d.month}`) ?? 0) + 1);
-  const capLeft = (u: Unit, m: string) => (u.max == null ? Infinity : u.max - (counts.get(`${u.key}|${m}`) ?? 0));
-  const count = (u: Unit, m: string) => counts.set(`${u.key}|${m}`, (counts.get(`${u.key}|${m}`) ?? 0) + 1);
-
-  // ---------- destination rules ----------
-  const visitsIn = (seq: number[]) => seq.filter((id) => id !== base);
-  const maxPerDay = (id: number) => dest(id)?.maxPerDay ?? 1;
-  const minGap = (id: number) => dest(id)?.minGapDays ?? 0;
-
-  /**
-   * May these arrivals be added to the given days (inside one unit)? Arrivals are the stops the car
-   * drives to, so staying somewhere (X → Y → X) counts X once.
-   */
-  const rulesOk = (span: { day: Day; arrivals: number[]; replace?: boolean }[], perDay = true) => {
-    const inSpan = new Set(span.map((s) => s.day.index));
-    for (const { day, arrivals, replace } of span) {
-      const all = [...(replace ? [] : visitsIn(day.seq.slice(1))), ...visitsIn(arrivals)];
-      for (const id of new Set(visitsIn(arrivals))) {
-        if (perDay && all.filter((x) => x === id).length > maxPerDay(id)) return false;
-        const gap = minGap(id);
-        for (let i = Math.max(0, day.index - gap); i <= Math.min(days.length - 1, day.index + gap) && gap > 0; i++) {
-          if (inSpan.has(i)) continue;
-          if (days[i].seq.includes(id)) return false;
-        }
-      }
+  const occurrences = new Map<string, { start: number; end: number }[]>();
+  const counts = new Map<string, number>(); // `${unitKey}|${bucket}`
+  const record = (u: Unit, start: number, len: number) => {
+    occurrences.set(u.key, [...(occurrences.get(u.key) ?? []), { start, end: start + len - 1 }]);
+    const k = `${u.key}|${bucketOf(days[start].date, u.rule.period)}`;
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  };
+  for (const u of units) {
+    for (const d of days) {
+      if (d.ruleKey !== u.key) continue;
+      let len = 1;
+      while (d.index + len < days.length && days[d.index + len].unitId === d.unitId) len++;
+      record(u, d.index, len);
     }
-    return true;
+  }
+  const countIn = (u: Unit, date: string) => counts.get(`${u.key}|${bucketOf(date, u.rule.period)}`) ?? 0;
+  const capOk = (u: Unit, date: string) => u.rule.max == null || countIn(u, date) < u.rule.max;
+  const gapOk = (u: Unit, start: number, len: number) => {
+    const g = u.rule.minGapDays ?? 0;
+    if (!g) return true;
+    return (occurrences.get(u.key) ?? []).every((o) => start - o.end > g || o.start - (start + len - 1) > g);
+  };
+  /** May the unit start on this day? Its weekday rule, else working days (Saturday only as a fallback). */
+  const startDayOk = (u: Unit, d: Day, allowSpare: boolean) => {
+    if (d.holiday) return false;
+    if (u.rule.weekdays.length) return u.rule.weekdays.includes(isoWeekday(d.date));
+    return d.driving || (allowSpare && isoWeekday(d.date) === 6);
+  };
+  /** Once a day per place, unless the route's own rule allows more per day. */
+  const perDayOk = (u: Unit, d: Day, visits: number[]) => {
+    const limit = u.rule.period === 'day' && u.rule.max ? u.rule.max : 1;
+    const arrivals = visitsIn(d.seq.slice(1));
+    return visits.every((v) => arrivals.filter((x) => x === v).length + 1 <= limit);
   };
 
+  // ---------- tours ----------
   const journeysOf = (seq: number[]) => {
     const out: number[][] = [];
     let cur: number[] = [];
@@ -284,7 +285,6 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     }
     return { order: best, units: bestUnits };
   };
-
   /** Could the visits be chained onto an existing journey of the day with a real saving? */
   const mergeOption = (day: Day, visits: number[]) => {
     if (day.kind !== 'free' || visits.length + visitsIn(day.seq).length > 5) return null;
@@ -304,17 +304,23 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     segments[day.segment].used += seqUnits(day.seq) - before;
   };
 
-  /** A one-day journey for a route: base → from → to → base. */
-  const routeVisits = (r: Route) => visitsIn(journeyStops(base, [r.fromId, r.toId]).slice(1, -1));
+  // ---------- placing ----------
+  type Scope = { seg?: number; inBucket?: (d: Day) => boolean };
+  const inScope = (d: Day, scope: Scope) =>
+    d.segment >= 0 && (scope.seg == null || d.segment === scope.seg) && (!scope.inBucket || scope.inBucket(d));
 
-  const placeOneDay = (u: Unit, visits: number[], month: string, seg: number | null, noMerge: boolean): boolean => {
+  /** Days a one-day route could go on. */
+  const oneDayCandidates = (u: Unit, scope: Scope, allowSpare: boolean) => {
+    const visits = routeVisits(u.route!);
+    return days.filter((d) =>
+      inScope(d, scope) && (d.kind === null || d.kind === 'free') && journeysOf(d.seq).length < MAX_JOURNEYS_PER_DAY &&
+      startDayOk(u, d, allowSpare) && capOk(u, d.date) && gapOk(u, d.index, 1) && perDayOk(u, d, visits));
+  };
+
+  const placeOneDay = (u: Unit, scope: Scope, noMerge: boolean): boolean => {
+    const visits = routeVisits(u.route!);
     for (const allowSpare of [false, true]) {
-      const cand = days.filter(
-        (d) => d.month === month && (seg == null || d.segment === seg) && d.segment >= 0 &&
-          (d.kind === null || d.kind === 'free') &&
-          (d.driving || (allowSpare && d.spare)) &&
-          journeysOf(d.seq).length < MAX_JOURNEYS_PER_DAY,
-      ).filter((d) => rulesOk([{ day: d, arrivals: visits }]));
+      const cand = oneDayCandidates(u, scope, allowSpare);
       if (!cand.length) continue;
       const merges = new Map(cand.map((d) => [d, noMerge ? null : mergeOption(d, visits)]));
       const day = pick(cand, (d) => {
@@ -335,137 +341,87 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
       else js.push(visits);
       if (!day.kind) Object.assign(day, { kind: 'free', label: '', unitId: newUnit() });
       setSeq(day, fromJourneys(js));
-      count(u, month);
+      record(u, day.index, 1);
       return true;
     }
     return false;
   };
 
-  /** Several consecutive days (template or a far trip with nights away). */
-  const placeSpan = (u: Unit, seqs: number[][], kind: DayKind, label: string, month: string, seg: number | null, weekdays: number[]) => {
-    // a user-designed template may visit a place several times a day on purpose
-    const perDay = kind !== 'template';
-    const starts = days.filter((d) => {
-      if (d.month !== month || !spanFree(d.index, seqs.length)) return false;
-      const span = days.slice(d.index, d.index + seqs.length);
-      if (span.some((x) => x.segment < 0 || x.segment !== (seg ?? d.segment))) return false;
-      if (weekdays.length ? !weekdays.includes(((weekday(d.date) + 6) % 7) + 1) : !d.driving) return false;
-      const last = span[span.length - 1];
-      if (seqs[seqs.length - 1].length && !(last.driving || last.spare)) return false;
-      return rulesOk(span.map((x, i) => ({ day: x, arrivals: seqs[i].slice(1), replace: true })), perDay);
-    });
-    const start = pick(starts);
-    if (!start) return false;
-    const unit = newUnit();
-    seqs.forEach((seq, i) => {
-      const day = days[start.index + i];
-      Object.assign(day, { kind, label, unitId: unit, ruleKey: i === 0 ? u.key : undefined, fixed: true, seq: [] });
-      setSeq(day, seq);
-    });
-    count(u, month);
-    return true;
-  };
-
-  /** Far route: sometimes stay there for 1–2 nights, with local trips in between. */
-  const farPlan = (r: Route): number[][] | null => {
-    const visits = routeVisits(r);
-    if (req.farKm == null || !visits.length) return null;
-    const oneWay = km(base, visits[0]);
-    if (oneWay < req.farKm) return null;
-    const pStay = oneWay * 2 > LONG_DAY_KM ? 1 : Math.min(0.9, 0.5 + (oneWay - req.farKm) / (req.farKm * 2));
-    if (rnd() > pStay) return null;
-    const there = visits[visits.length - 1];
-    const near = [...ctx.destinations.keys()].filter((id) => {
-      if (id === base || id === there) return false;
-      try { return km(there, id) <= NEAR_KM; } catch { return false; }
-    });
-    const middle = rnd() < 0.6 ? 1 : 2;
-    const seqs: number[][] = [[base, ...visits]];
-    for (let i = 0; i < middle; i++) {
-      const n = near.length && rnd() < 0.6 ? pick(near)! : null;
-      seqs.push(n ? [there, n, there] : []);
+  /** A template: several consecutive days, all free. */
+  const placeSpan = (u: Unit, scope: Scope): boolean => {
+    const seqs = expandTemplate(u.template!);
+    for (const allowSpare of [false, true]) {
+      const starts = days.filter((d) => {
+        if (!inScope(d, scope) || !spanFree(d.index, seqs.length)) return false;
+        if (days.slice(d.index, d.index + seqs.length).some((x) => x.segment !== d.segment)) return false;
+        return startDayOk(u, d, allowSpare) && capOk(u, d.date) && gapOk(u, d.index, seqs.length);
+      });
+      const start = pick(starts);
+      if (!start) continue;
+      const unit = newUnit();
+      seqs.forEach((seq, i) => {
+        const day = days[start.index + i];
+        Object.assign(day, { kind: 'template', label: u.label, unitId: unit, ruleKey: i === 0 ? u.key : undefined, seq: [] });
+        setSeq(day, seq);
+      });
+      record(u, start.index, seqs.length);
+      return true;
     }
-    seqs.push([there, base]);
-    return seqs;
+    return false;
   };
 
-  /** Place one occurrence of a unit; returns false when it does not fit anywhere. */
-  const placeUnit = (u: Unit, month: string, seg: number | null, noMerge = false): boolean => {
-    if (u.template) {
-      return placeSpan(u, expandTemplate(u.template), 'template', u.template.name, month, seg, u.template.startWeekdays);
-    }
-    const far = noMerge ? null : farPlan(u.route!);
-    if (far && placeSpan(u, far, 'trip', `Többnapos út: ${name(routeVisits(u.route!).slice(-1)[0])}`, month, seg, [])) return true;
-    return placeOneDay(u, routeVisits(u.route!), month, seg, noMerge);
-  };
+  const placeUnit = (u: Unit, scope: Scope, noMerge = false) => (u.template ? placeSpan(u, scope) : placeOneDay(u, scope, noMerge));
 
-  const unitUnits = (u: Unit) =>
-    u.template ? expandTemplate(u.template).reduce((s, q) => s + seqUnits(q), 0) : seqUnits(journeyStops(base, routeVisits(u.route!)));
-
-  // ---------- step 1: monthly minimums ----------
-  for (const month of months) {
-    for (const u of units) {
-      for (let k = counts.get(`${u.key}|${month}`) ?? 0; k < u.min; k++) {
-        if (!placeUnit(u, month, null)) {
-          warnings.push(`${month}: a(z) „${u.label}” havi minimuma (${u.min}) nem fért bele — nincs elég szabad nap vagy ütközik egy szabállyal.`);
-          break;
-        }
+  // ---------- step 1: minimums per day / week / month ----------
+  const PERIOD_TEXT = { day: 'napi', week: 'heti', month: 'havi' } as const;
+  for (const u of free) {
+    if (!u.rule.min) continue;
+    const buckets = [...new Set(days.map((d) => bucketOf(d.date, u.rule.period)))];
+    let missed = 0;
+    for (const b of buckets) {
+      const inBucket = (d: Day) => bucketOf(d.date, u.rule.period) === b;
+      for (let k = countIn(u, days.find(inBucket)!.date); k < u.rule.min; k++) {
+        if (!placeUnit(u, { inBucket })) { missed++; break; }
       }
+    }
+    if (missed) {
+      warnings.push(`„${u.label}”: a ${PERIOD_TEXT[u.rule.period]} minimum (${u.rule.min}) ${missed} alkalommal nem fért bele — nincs elég szabad nap, vagy ütközik egy szabállyal.`);
     }
   }
   segments.forEach((s) => {
     if (s.used > s.target)
-      warnings.push(`${s.label}: a havi minimumok miatt ${((s.used - s.target) / UNIT).toFixed(1)} km-rel több út került be, mint amennyit a km-óra enged.`);
+      warnings.push(`${s.label}: a minimumok miatt ${((s.used - s.target) / UNIT).toFixed(1)} km-rel több út került be, mint amennyit a km-óra enged.`);
   });
 
   // ---------- step 2: fill every segment up to its target ----------
-  const isFar = (u: Unit) => !!u.route && req.farKm != null && km(base, routeVisits(u.route)[0]) >= req.farKm;
-  const oneDayUnits = (u: Unit) => !u.template && !isFar(u);
-  const maxUnits = Math.max(0, ...units.filter(oneDayUnits).map(unitUnits));
+  const simple = free.filter((u) => !u.template);
+  const maxUnits = Math.max(0, ...simple.map(unitUnits));
   segments.forEach((seg, s) => {
-    const segMonths = months.filter((m) => days.some((d) => d.segment === s && d.month === m && !d.kind));
-
     // 2a: random walk until the remainder is small
     const threshold = Math.max(maxUnits * 2, 60 * UNIT);
     const failed = new Set<string>();
     for (let guard = 0; guard < 20000; guard++) {
       const rest = seg.target - seg.used;
       if (rest <= threshold) break;
-      const options: { u: Unit; m: string }[] = [];
-      for (const m of segMonths) {
-        for (const u of units) {
-          if (failed.has(`${u.key}|${m}`) || unitUnits(u) > rest || capLeft(u, m) <= 0) continue;
-          options.push({ u, m });
-        }
-      }
-      const o = pick(options, ({ u, m }) => {
-        const free = days.filter((d) => d.segment === s && d.month === m && !d.kind && d.driving).length;
-        return ((free + 1) / (1 + (counts.get(`${u.key}|${m}`) ?? 0))) * (u.template ? 0.6 : 1);
-      });
-      if (!o) break;
-      if (!placeUnit(o.u, o.m, s)) failed.add(`${o.u.key}|${o.m}`);
+      const options = free.filter((u) => !failed.has(u.key) && unitUnits(u) <= rest);
+      const u = pick(options, (x) => (x.template ? 0.6 : 1) / (1 + (occurrences.get(x.key) ?? []).length * 0.15));
+      if (!u) break;
+      if (!placeUnit(u, { seg: s })) failed.add(u.key);
     }
 
-    // 2b: exact finish with a bounded 0/1 knapsack of plain one-day trips. Repeated a few times,
-    // because the rules (once a day, minimum gap) can make some picks impossible to place.
-    const simple = units.filter(oneDayUnits);
+    // 2b: exact finish with a bounded 0/1 knapsack of one-day routes. Repeated a few times,
+    // because the rules can make some picks impossible to place together.
     for (let round = 0; round < 4 && simple.length; round++) {
       const rest = seg.target - seg.used;
-      if (Math.abs(rest) < UNIT) break;
-      if (rest <= 0) break;
-      const items: { u: Unit; m: string; n: number; units: number }[] = [];
-      for (const m of segMonths) {
-        for (const u of simple) {
-          const visits = routeVisits(u.route!);
-          const slots = days.filter((d) => d.segment === s && d.month === m && (d.kind === null || d.kind === 'free') &&
-            (d.driving || d.spare) && journeysOf(d.seq).length < MAX_JOURNEYS_PER_DAY && rulesOk([{ day: d, arrivals: visits }])).length;
-          const uu = unitUnits(u);
-          let cap = Math.min(capLeft(u, m), slots, Math.ceil(rest / uu) + 1);
-          for (let p = 1; cap > 0; p *= 2) {
-            const n = Math.min(p, cap);
-            items.push({ u, m, n, units: n * uu });
-            cap -= n;
-          }
+      if (rest < UNIT) break;
+      const items: { u: Unit; n: number; units: number }[] = [];
+      for (const u of simple) {
+        const uu = unitUnits(u);
+        let cap = Math.min(oneDayCandidates(u, { seg: s }, true).length, Math.ceil(rest / uu) + 1);
+        for (let p = 1; cap > 0; p *= 2) {
+          const n = Math.min(p, cap);
+          items.push({ u, n, units: n * uu });
+          cap -= n;
         }
       }
       for (let i = items.length - 1; i > 0; i--) {
@@ -483,7 +439,7 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
       if (best === 0) break;
       for (let v = best; v > 0; ) {
         const it = items[from[v]];
-        for (let k = 0; k < it.n; k++) placeOneDay(it.u, routeVisits(it.u.route!), it.m, s, true);
+        for (let k = 0; k < it.n; k++) placeOneDay(it.u, { seg: s }, true);
         v -= it.units;
       }
     }
@@ -503,19 +459,13 @@ export function generate(req: GenerateRequest, ctx: GeneratorContext): GenerateR
     if (d.seq[0] !== where) warnings.push(`${d.date}: a nap nem ott kezdődik, ahol az előző véget ért (${name(where)}) — nézd át az utazás-sablont.`);
     where = d.seq[d.seq.length - 1];
     const dayKm = seqUnits(d.seq) / UNIT;
-    if (dayKm > LONG_DAY_KM) warnings.push(`${d.date}: ${dayKm.toFixed(0)} km egy nap alatt — ez sok lehet.`);
-    if (!d.driving && !d.spare && d.kind === 'free') warnings.push(`${d.date}: vasárnapra vagy ünnepnapra került út.`);
-    const arrivals = d.seq.slice(1);
-    for (const id of new Set(visitsIn(arrivals))) {
-      const n = arrivals.filter((x) => x === id).length;
-      if (n > maxPerDay(id) && d.kind !== 'free') warnings.push(`${d.date}: ${name(id)} ${n}× szerepel egy napon.`);
-    }
+    if (dayKm > LONG_DAY_KM) warnings.push(`${d.date}: ${dayKm.toFixed(0)} km egy nap alatt — ez sok lehet. Többnapos útra használj utazás-sablont.`);
   }
-  const spareUsed = days.filter((d) => d.kind === 'free' && !d.driving).length;
-  if (spareUsed) warnings.push(`${spareUsed} szombati napra is került út, mert a hétköznapok beteltek.`);
+  const satUsed = days.filter((d) => d.kind === 'free' && isoWeekday(d.date) === 6).length;
+  if (satUsed && free.every((u) => !u.rule.weekdays.includes(6))) warnings.push(`${satUsed} szombati napra is került út, mert a hétköznapok beteltek.`);
   if (where !== base) warnings.push(`Az időszak végén az autó nem a telephelyen áll (${name(where)}).`);
   for (const u of units) {
-    if (u.max != null && u.min > u.max) warnings.push(`„${u.label}”: a havi minimum nagyobb a maximumnál.`);
+    if (u.rule.max != null && u.rule.min != null && u.rule.min > u.rule.max) warnings.push(`„${u.label}”: a minimum nagyobb a maximumnál.`);
   }
 
   // ---------- output ----------

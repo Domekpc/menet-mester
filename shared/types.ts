@@ -106,26 +106,23 @@ export interface OdometerCheckpoint {
   odometer: number;
 }
 
-export interface RouteRule {
-  routeId: number;
-  minPerMonth: number | null;
-  maxPerMonth: number | null;
-}
+export type RulePeriod = 'day' | 'week' | 'month';
 
-export interface TemplateRule {
-  templateId: number;
-  minPerMonth: number | null;
-  maxPerMonth: number | null;
+/** How often and when a route or a trip template may appear in a generated record. */
+export interface UnitRule {
+  kind: 'route' | 'template';
+  id: number;
+  period: RulePeriod; // min / max count per day, week or month
+  min: number | null;
+  max: number | null;
+  minGapDays: number | null; // at least this many days between two occurrences
+  weekdays: number[]; // allowed (start) weekdays, 1 = Monday … 7 = Sunday; empty = working days
+  onlyDates: string[]; // when set: exactly on these dates and never otherwise
 }
-
-/** Something the user knows about a given day, placed on the planner calendar. */
-export type PlanEntry =
-  | { id: string; date: string; type: 'visit'; destinationIds: number[]; odometer: number | null }
-  | { id: string; date: string; type: 'template'; templateId: number };
 
 export type TourChance = 'never' | 'rare' | 'sometimes' | 'often';
 
-export type DayKind = 'free' | 'trip' | 'template' | 'required' | 'plan';
+export type DayKind = 'free' | 'template' | 'required' | 'plan';
 
 /** What the car did on one day. Days without driving inside a multi-day trip have no stops. */
 export interface DayPlan {
@@ -149,12 +146,9 @@ export interface GenerateRequest {
   toMonth: string; // YYYY-MM
   stops: RequiredStop[];
   checkpoints: OdometerCheckpoint[];
-  routes: RouteRule[];
-  templates: TemplateRule[];
-  plan: PlanEntry[];
+  rules: UnitRule[]; // the routes and templates the generator may use
   locked: DayPlan[];
   tourChance: TourChance;
-  farKm: number | null; // one-way distance from which a trip may include nights away; null = never
   seed?: number;
 }
 

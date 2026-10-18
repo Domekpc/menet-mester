@@ -123,16 +123,14 @@ export async function resolveLegs(req: GenerateRequest) {
   const real = (id: number) => (id === BASE ? base : id);
 
   const ids = new Set<number>([base]);
-  for (const rule of req.routes) {
-    const r = allRoutes.find((x) => x.id === rule.routeId);
-    if (r) { ids.add(r.fromId); ids.add(r.toId); }
+  for (const rule of req.rules ?? []) {
+    if (rule.kind === 'route') {
+      const r = allRoutes.find((x) => x.id === rule.id);
+      if (r) { ids.add(r.fromId); ids.add(r.toId); }
+    } else {
+      allTemplates.find((t) => t.id === rule.id)?.days.forEach((d) => d.stops.forEach((id) => ids.add(real(id))));
+    }
   }
-  const usedTemplates = new Set([
-    ...(req.templates ?? []).map((t) => t.templateId),
-    ...(req.plan ?? []).flatMap((e) => (e.type === 'template' ? [e.templateId] : [])),
-  ]);
-  for (const t of allTemplates) if (usedTemplates.has(t.id)) t.days.forEach((d) => d.stops.forEach((id) => ids.add(real(id))));
-  for (const e of req.plan ?? []) if (e.type === 'visit') e.destinationIds.forEach((id) => ids.add(id));
   for (const s of req.stops) ids.add(s.destinationId);
   for (const l of req.locked ?? []) l.stops.forEach((id) => ids.add(id));
 

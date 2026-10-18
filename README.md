@@ -30,17 +30,16 @@ A felület: http://localhost:5173 (az API a 3001-es porton fut, a Vite proxyzza)
 - **Kötelező helyszínek:** a generátor a járműnaplóból „kéri le”, hol kellett az autónak lennie.
   A JSZP (szerviz/vizsga km-állások) nem kínál nyilvános API-t, ezért ezek kézzel rögzíthetők; a
   `server/index.ts` `providers` listája új forrással (pl. gyártói connected car API, GPS flotta) bővíthető.
-- **Utazás-sablonok:** napokra bontott, ismétlődő utazások (pl. hétfőn ki Deutschlandsbergbe, közben naponta
-  Aichegg és vissza, pénteken haza) és hogy mely napokon indulhat. Hogy egy generálásban hányszor szerepeljen,
-  azt a generátorban adod meg: csak ahova a naptárba tetted, vagy a generátor is beteheti (havonta min–max).
+- **Utazás-sablonok:** napokra bontott utazások (pl. kimész Deutschlandsbergbe, közben naponta Aichegg és
+  vissza, az utolsó napon haza).
+- **Szabályok** (generáláskor, utanként és sablononként egyformán): hányszor (naponta / hetente / havonta,
+  min–max), két alkalom között legalább X nap, mely napokon, csak ezeken a napokon (dátumlista).
 - **Generálás** (`server/generator.ts`): napokat tervez. Először a rögzített napok kerülnek be (korábban
-  rögzített napok, járműnapló, a naptárba tett látogatások és sablonok, dátumhoz kötött sablonok). A km-óra
-  kontrollpontok szakaszokra bontják az időszakot, és minden szakaszt munkanapokra elosztott utakkal tölt ki:
-  - úticél-szabályok: naponta legfeljebb (alapból 1), két látogatás között legalább X nap,
-  - körutak véletlenszerűen (soha / ritkán / néha / gyakran), csak egymáshoz közeli helyekből,
-  - messzi útnál (állítható km felett) 1–2 éjszaka ott, közben helyi utakkal vagy álló autóval,
-  - a végén pontos illesztés (korlátos hátizsák), majd életszerűségi ellenőrzés.
-  Ugyanazzal a seed-del ugyanaz az eredmény; a rögzített napok új változatnál is megmaradnak.
+  rögzített napok, járműnapló, dátumlistás utak és sablonok). A km-óra kontrollpontok szakaszokra bontják az
+  időszakot, és minden szakaszt a szabályok szerint, munkanapokra elosztott utakkal tölt ki. Egy helyre naponta
+  egyszer megy (ha a szabály nem mond mást), a körutak véletlenszerűek és csak közeli helyekből állnak, a végén
+  pontos illesztés (korlátos hátizsák) és életszerűségi ellenőrzés jön. Ugyanazzal a seed-del ugyanaz az
+  eredmény; a rögzített napok új változatnál is megmaradnak.
 - **Export** (`server/export.ts`): hónaponként egy munkalap a minta szerinti fejléccel, útlistával,
   összes km-rel és üzemanyagköltséggel (norma × ár).
 

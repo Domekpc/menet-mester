@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { MonthGrid } from './MonthGrid';
 
 export const KIND_LABEL: Record<DayKind, string> = {
-  free: 'generált', trip: 'többnapos út', template: 'utazás-sablon', required: 'járműnapló', plan: 'megadott nap',
+  free: 'generált', template: 'utazás-sablon', required: 'járműnapló', plan: 'megadott nap',
 };
 
 const weekdays = ['V', 'H', 'K', 'Sze', 'Cs', 'P', 'Szo'];
@@ -140,7 +140,7 @@ export function ResultView({ result, vehicle, destById, fuelPrices, onFuelPrice,
                     <td>
                       <span className="small">{l.fromAddress} <span className="muted">→</span> {l.toAddress}</span>
                       {l.required && <span className="chip sign" style={{ marginLeft: 8 }}>{l.kind === 'plan' ? 'megadott' : 'kötelező'}</span>}
-                      {newDay && (l.kind === 'template' || l.kind === 'trip') && <span className="chip info" style={{ marginLeft: 8 }}>{l.label}</span>}
+                      {newDay && l.kind === 'template' && <span className="chip info" style={{ marginLeft: 8 }}>{l.label}</span>}
                     </td>
                     <td>{l.partner}</td>
                     <td className="num mono">{fmtKm(l.km)}</td>
