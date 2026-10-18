@@ -198,6 +198,20 @@ describe('generate', () => {
     expect(r.warnings).toEqual([]);
   });
 
+  it('closes the gaps of a template and brings the car home', () => {
+    const open: TripTemplate = { ...week, id: 32, name: 'Nyitott', days: [{ stops: [6], repeat: 1 }, { stops: [6, 7], repeat: 1 }] };
+    const c = { ...ctx, templates: new Map([...ctx.templates, [32, open]]) };
+    const r = generate({ ...base, endOdometer: 11500, rules: [...base.rules, tpl(32, { onlyDates: ['2024-05-06'] })] }, c);
+    expect(r.days.filter((d) => d.date === '2024-05-06' || d.date === '2024-05-07').map((d) => d.stops)).toEqual([[1, 6], [6, 7, 1]]);
+    expect(r.warnings.filter((w) => w.includes('nem ott kezdődik'))).toEqual([]);
+  });
+
+  it('reports overfilling minimums only once', () => {
+    const r = generate({ ...base, endOdometer: 10100, rules: [rule(10, { min: 3 })] }, ctx);
+    expect(r.warnings.filter((w) => w.includes('Záró km-állás'))).toHaveLength(1);
+    expect(r.warnings[0]).toContain('minimumok miatt');
+  });
+
   it('reports a template whose departure and arrival days cannot match', () => {
     const r = generate({ ...base, rules: [...base.rules, tpl(30, { min: 1, weekdays: [1], endWeekdays: [3] })] }, ctx);
     expect(r.days.some((d) => d.ruleKey === 't:30')).toBe(false);

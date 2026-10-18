@@ -139,9 +139,23 @@ function generateOnce(req: GenerateRequest, ctx: GeneratorContext): GenerateResu
     Object.assign(day, { seq: dedupe(seq), kind, label, unitId, ruleKey });
   };
 
-  /** Day sequences of a template, BASE replaced by the real base. */
-  const expandTemplate = (t: TripTemplate) =>
-    t.days.flatMap((d) => Array.from({ length: Math.max(1, d.repeat || 1) }, () => d.stops.map(real)));
+  /**
+   * Day sequences of a template, BASE replaced by the real base. Gaps are closed so the car never
+   * jumps: a day that starts somewhere else first drives there, and the trip ends back at base.
+   */
+  const expandTemplate = (t: TripTemplate) => {
+    const seqs = t.days.flatMap((d) => Array.from({ length: Math.max(1, d.repeat || 1) }, () => d.stops.map(real)));
+    let loc = base;
+    let last = -1;
+    seqs.forEach((seq, i) => {
+      if (!seq.length) return;
+      if (seq[0] !== loc) seqs[i] = [loc, ...seq];
+      loc = seqs[i][seqs[i].length - 1];
+      last = i;
+    });
+    if (last >= 0 && loc !== base) seqs[last] = [...seqs[last], base];
+    return seqs.map(dedupe);
+  };
 
   const spanFree = (start: number, len: number) => {
     if (start < 0 || start + len > days.length) return false;
@@ -409,10 +423,8 @@ function generateOnce(req: GenerateRequest, ctx: GeneratorContext): GenerateResu
       warnings.push(`„${u.label}”: a ${PERIOD_TEXT[u.rule.period]} minimum (${u.rule.min}) ${missed} alkalommal nem fért bele — nincs elég szabad nap, vagy ütközik egy szabállyal.`);
     }
   }
-  segments.forEach((s) => {
-    if (s.used > s.target)
-      warnings.push(`${s.label}: a minimumok miatt ${((s.used - s.target) / UNIT).toFixed(1)} km-rel több út került be, mint amennyit a km-óra enged.`);
-  });
+  // segments the minimums alone already overfill; reported once, at the end of step 2
+  const overByMinimums = new Set(segments.flatMap((s, i) => (s.used > s.target ? [i] : [])));
 
   // ---------- step 2: fill every segment up to its target ----------
   let mismatch = 0; // largest odometer difference (km) of a segment
@@ -468,7 +480,9 @@ function generateOnce(req: GenerateRequest, ctx: GeneratorContext): GenerateResu
 
     const diff = (seg.used - seg.target) / UNIT;
     mismatch = Math.max(mismatch, Math.abs(diff));
-    if (Math.abs(diff) >= 1) {
+    if (diff >= 1 && overByMinimums.has(s)) {
+      warnings.push(`${seg.label}: a minimumok miatt ${diff.toFixed(1)} km-rel több út került be, mint amennyit a km-óra enged. Csökkentsd a minimumokat, vagy emeld a záró km-állást.`);
+    } else if (Math.abs(diff) >= 1) {
       warnings.push(
         `${seg.label}: a kiválasztott utakkal ${Math.abs(diff).toFixed(1)} km-rel ${diff < 0 ? 'kevesebb' : 'több'} jött ki, mint a km-óra szerinti futás. Adj hozzá több utat, vagy lazíts a szabályokon.`,
       );

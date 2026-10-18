@@ -117,9 +117,9 @@ function TemplateForm({ initial, destinations, reloadDests, onClose, onSave }: {
   days.forEach((d, i) => {
     if (!d.stops.length) return;
     const from = i === 0 ? BASE : endOf(i - 1);
-    if (d.stops[0] !== from) hints.push(`${labels[i]}: ${placeName(from, byId)} helyett innen indul: ${placeName(d.stops[0], byId)}.`);
+    if (d.stops[0] !== from) hints.push(`${labels[i]}: a nap ${placeName(d.stops[0], byId)} helyen kezdődik, de az autó ${placeName(from, byId)} helyen áll — a generátor beteszi az átjutást (${placeName(from, byId)} → ${placeName(d.stops[0], byId)}).`);
   });
-  if (endOf(days.length - 1) !== BASE) hints.push('Az utolsó nap nem a telephelyen ér véget — utána az autó nem lesz otthon.');
+  if (endOf(days.length - 1) !== BASE) hints.push(`Az utazás nem a telephelyen ér véget — az utolsó napon a generátor hazaviszi az autót (${placeName(endOf(days.length - 1), byId)} → Telephely).`);
 
   const submit = async () => {
     setErr('');
